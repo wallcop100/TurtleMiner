@@ -1,4 +1,4 @@
--- Version: 1.0.1
+-- Version: 1.0.2
 -- TurtleMiner navigation: journaled moves/turns, retrying dig/attack, goTo, crash recovery,
 -- GPS sync and facing calibration.
 --
@@ -18,6 +18,22 @@
 --                                 refuse while set. Main clears it on RESET_HOME.
 --   st.facingUnknown  bool|nil    set while calibrateFacing() is probing; a crash during the
 --                                 probe makes the next recover() calibrate again.
+--
+-- Intent block names: before every turn (and before every move while fuel is "unlimited", where
+-- fuel cannot tell whether a move happened) the block seen in the op's inspect direction is
+-- stored in the intent line (front for f/b/l/r, up for u, down for d). recover() inspects the
+-- same direction again: if the names differ and at least one of them is a stable solid block,
+-- the op happened (a stable solid block cannot appear in or vanish from a cell by itself).
+-- Equal names, or a difference the world can make by itself (air/fluid/falling blocks/turtles/
+-- fluid-generated blocks on both sides), stay ambiguous -> NEEDS_HELP (or GPS calibration).
+-- Residual: a player (or another turtle) digging/placing in that one cell during the crash
+-- window, or a server rollback of a dig that cost no fuel, can still mislead the comparison.
+-- A turn whose side block equals the old front block (stone wall -> stone wall, common at a
+-- 1x1 tunnel face) and a move whose next cell equals the destination (air -> air in an open
+-- tunnel) cannot be settled without GPS.
+--
+-- Moves that dig never dig protected blocks (names containing chest, barrel, shulker,
+-- computercraft, turtle): they return false, "protected".
 
 local state = require("state")
 
@@ -34,6 +50,11 @@ local MOVE   = { f = "forward", b = "back", u = "up", d = "down" }
 local DETECT = { f = "detect", u = "detectUp", d = "detectDown" }
 local DIG    = { f = "dig", u = "digUp", d = "digDown" }
 local ATTACK = { f = "attack", u = "attackUp", d = "attackDown" }
+local INSPECT = { f = "inspect", b = "inspect", l = "inspect", r = "inspect",
+                  u = "inspectUp", d = "inspectDown" }
+
+local AIR = "minecraft:air"
+local PROTECTED = { "chest", "barrel", "shulker", "computercraft", "turtle" }
 
 ----------------------------------------------------------------------------
 -- helpers
@@ -75,6 +96,55 @@ local function posStr(p)
     return p.x .. "," .. p.y .. "," .. p.z
 end
 
+-- Name of the block in direction fnName ("inspect", "inspectUp", "inspectDown"); AIR when
+-- nothing is there; nil when it cannot be told.
+local function look(fnName)
+    local fn = fnName and turtle[fnName]
+    if not fn then return nil end
+    local ok, found, data = pcall(fn)
+    if not ok then return nil end
+    if found then
+        if type(data) == "table" and type(data.name) == "string" then return data.name end
+        return nil
+    end
+    return AIR
+end
+
+local function isProtected(name)
+    if type(name) ~= "string" then return false end
+    local n = string.lower(name)
+    for i = 1, #PROTECTED do
+        if string.find(n, PROTECTED[i], 1, true) then return true end
+    end
+    return false
+end
+
+local function has(n, s) return string.find(n, s, 1, true) ~= nil end
+
+-- "air" | "fluid" | "falling" | "volatile" | "solid" (stable: cannot appear or vanish by itself)
+local function blockKind(name)
+    local n = string.lower(name)
+    if n == AIR or string.find(n, "[:_]air$") then return "air" end
+    if has(n, "water") or has(n, "lava") or has(n, "fluid") or has(n, "bubble_column") then
+        return "fluid"
+    end
+    if has(n, "gravel") or (has(n, "sand") and not has(n, "sandstone")) or has(n, "concrete_powder")
+        or has(n, "anvil") or has(n, "pointed_dripstone") or has(n, "scaffolding") then
+        return "falling"
+    end
+    if has(n, "cobblestone") or has(n, "obsidian") or has(n, "basalt") or has(n, "ice")
+        or has(n, "snow") or has(n, "fire") or has(n, "turtle") or has(n, "computercraft") then
+        return "volatile"
+    end
+    return "solid"
+end
+
+-- true only when the change pre -> now proves the op happened (see header)
+local function provesOp(pre, now)
+    if type(pre) ~= "string" or type(now) ~= "string" or pre == now then return false end
+    return blockKind(pre) == "solid" or blockKind(now) == "solid"
+end
+
 -- position after op from (p, facing)
 local function applyOp(p, facing, op)
     local q = copyPos(p)
@@ -107,7 +177,9 @@ end
 -- One journaled turtle op. Returns ok, err from the turtle call.
 local function step(op)
     local before = fuel()
-    state.logIntent(op, before)
+    local seen = nil
+    if op == "l" or op == "r" or before == "unlimited" then seen = look(INSPECT[op]) end
+    state.logIntent(op, before, seen)
     local ok, err
     if op == "l" then
         ok, err = turtle.turnLeft()
@@ -156,6 +228,7 @@ local function moveDig(op, dig)
         local progressed = false
         if turtle[DETECT[op]]() then
             if not dig then return false, "blocked" end
+            if isProtected(look(INSPECT[op])) then return false, "protected" end
             local ok, err = turtle[DIG[op]]()
             if ok then
                 progressed = true
@@ -286,9 +359,15 @@ function nav.goTo(target, opts2)
     if type(order) ~= "string" or order == "" then
         if tgt.y > st.pos.y then order = "xzy" else order = "yxz" end
     end
+    local toHome = type(st.home) == "table" and samePos(tgt, st.home)
     local ok, err = runOrder(order, tgt, dig)
     if not ok and err ~= "abort" and err ~= "no_fuel" then
-        ok, err = runOrder(string.reverse(order), tgt, dig)
+        local alt = string.reverse(order)
+        -- never climb first towards home: that digs straight up through the base
+        local climbFirst = string.sub(alt, 1, 1) == "y" and tgt.y > st.pos.y
+        if not (toHome and climbFirst) then
+            ok, err = runOrder(alt, tgt, dig)
+        end
     end
     if not ok then return false, err end
     if not samePos(st.pos, tgt) then return false, "not at target" end
@@ -316,8 +395,11 @@ local function facingFromDelta(dx, dz)
     return nil
 end
 
--- Moves one block (forward, else back, else up+forward), compares GPS fixes, returns to the
--- start. Never digs (the turtle may be next to its chest). Never guesses.
+-- Moves one block, compares GPS fixes, returns to the start. Probe order: forward, back,
+-- up+forward, turn right up to 3 times probing forward after each turn (1x1 tunnel), and,
+-- only when not at home, dig one non-protected block in one of the four directions and probe
+-- into it. Turns are journaled and st.facingUnknown stays set until the result is saved, so a
+-- crash during the probe makes the next recover() calibrate again. Never guesses.
 function nav.calibrateFacing()
     if not st.gps then return false, "cannot calibrate facing (no GPS mode)" end
     local p0 = nav.gpsLocate()
@@ -325,6 +407,7 @@ function nav.calibrateFacing()
     st.pos = p0
     st.facingUnknown = true
     save()
+    local atHome = type(st.home) == "table" and samePos(p0, st.home)
 
     local function finish(f)
         st.facing = f
@@ -340,8 +423,10 @@ function nav.calibrateFacing()
         return f == "unlimited" or f >= n
     end
 
-    -- forward probe
-    if needFuel(2) and not turtle.detect() and step("f") then
+    -- forward probe from where the turtle stands and faces now.
+    -- nil: no room (try something else); true | false, reason: final answer
+    local function probeForward()
+        if not needFuel(2) or turtle.detect() or not step("f") then return nil end
         local p1 = nav.gpsLocate()
         local f = p1 and facingFromDelta(p1.x - p0.x, p1.z - p0.z)
         if f then st.facing = f end
@@ -354,6 +439,9 @@ function nav.calibrateFacing()
         end
         return false, "cannot calibrate facing (GPS lost during probe)"
     end
+
+    local r, why = probeForward()
+    if r ~= nil then return r, why end
     -- back probe
     if needFuel(2) and step("b") then
         local p1 = nav.gpsLocate()
@@ -383,6 +471,28 @@ function nav.calibrateFacing()
             return false, "cannot calibrate facing (GPS lost during probe)"
         end
         step("d")
+    end
+    -- turn and probe the other horizontal directions (turns cost no fuel). The probe measures
+    -- the facing after these turns, so the turns need no further accounting.
+    for _ = 1, 3 do
+        if not step("r") then break end
+        r, why = probeForward()
+        if r ~= nil then return r, why end
+    end
+    -- boxed in: away from home, dig one block to make room (never a protected block)
+    if not atHome and needFuel(2) then
+        for k = 1, 4 do
+            if turtle.detect() and not isProtected(look("inspect")) then
+                for _ = 1, 5 do
+                    if not turtle.detect() then break end
+                    if not turtle.dig() then break end
+                    if turtle.detect() then sleep(0.4) end   -- falling gravel/sand
+                end
+                r, why = probeForward()
+                if r ~= nil then return r, why end
+            end
+            if k < 4 and not step("r") then break end
+        end
     end
     local p = nav.gpsLocate()
     if p then st.pos = p end
@@ -458,12 +568,27 @@ function nav.recover(stIn)
     local last = points[#points]
     local cur = { pos = copyPos(last.pos), facing = last.facing, fuel = last.fuel }
     local facingDoubt = st.facingUnknown and true or false
+    local turnByInspect = false
     local posUnknown = false
     local reasonFacing = "facing unknown after crash"
     local reasonPos = "position unknown after crash"
 
     -- step 2: dangling intent
     local unresolved = false
+    -- inspect in the op's direction and compare with the block stored in the intent
+    local function inspectProves(op)
+        if not pending.front or not INSPECT[op] then return false end
+        return provesOp(pending.front, look(INSPECT[op]))
+    end
+    local function settleTurn()
+        if not st.facingUnknown and inspectProves(pending.op) then
+            cur.pos, cur.facing = applyOp(cur.pos, cur.facing, pending.op)
+            turnByInspect = true
+            event("info", "turn in flight at crash settled by inspect (block in front changed)")
+        else
+            facingDoubt = true
+        end
+    end
     if pending then
         local isMove = MOVE[pending.op] ~= nil
         if numeric and isNum(pending.fuel) then
@@ -472,12 +597,20 @@ function nav.recover(stIn)
                 cur.fuel = worldFuel
                 points[#points + 1] = { pos = cur.pos, facing = cur.facing, fuel = worldFuel, tag = "D" }
             elseif worldFuel == pending.fuel then
-                if not isMove then facingDoubt = true end
+                if not isMove then settleTurn() end
             else
                 unresolved = true   -- neither: the world rolled back; step 3
             end
+        elseif isMove then
+            -- unlimited fuel: only the block in the move direction can tell
+            if not numeric and inspectProves(pending.op) then
+                cur.pos, cur.facing = applyOp(cur.pos, cur.facing, pending.op)
+                event("info", "move in flight at crash settled by inspect")
+            else
+                posUnknown = true
+            end
         else
-            if isMove then posUnknown = true else facingDoubt = true end
+            settleTurn()
         end
     end
 
@@ -513,6 +646,13 @@ function nav.recover(stIn)
                     break
                 end
             end
+            if not found and worldFuel > cur.fuel and not pending then
+                -- fuel rose with no R line: crash between turtle.refuel and logRefuel. A refuel
+                -- never moves or turns the turtle, so the replayed position stands.
+                cur.fuel = worldFuel
+                found = true
+                event("info", "fuel rose without a journal record (refuel before crash), position kept")
+            end
             if not found then posUnknown = true; facingDoubt = true end
         end
         unresolved = false
@@ -525,6 +665,8 @@ function nav.recover(stIn)
         if g then
             if not samePos(g, cur.pos) then
                 event("warn", "GPS correction: journal " .. posStr(cur.pos) .. " -> GPS " .. posStr(g))
+                -- the inspect comparison assumed the journal position
+                if turnByInspect then facingDoubt = true end
             end
             cur.pos = g
             posUnknown = false

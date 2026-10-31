@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- TurtleMiner persistent state: atomic snapshot + append-only move journal.
 --
 -- Files (turtle root):
@@ -8,7 +8,10 @@
 --   .tm_journal.tmp  journal being rewritten by state.save
 --
 -- Journal records (space separated, tag first):
---   I <op> <fuel>                        intent, written before a move/turn (op: f b u d l r)
+--   I <op> <fuel> [name]                 intent, written before a move/turn (op: f b u d l r);
+--                                        optional <name>: block seen before the op in the op's
+--                                        inspect direction (nav decides; "minecraft:air" = none).
+--                                        Older lines without it still parse (e.front = nil).
 --   D <x> <y> <z> <facing> <fuel>        done, written after the op (also after a failed op,
 --                                        with the unchanged position, to close the intent)
 --   R <fuel>                             fuel after a refuel
@@ -181,7 +184,7 @@ local function parseLine(line)
     if tag == "I" then
         local fuel = tonumber(f[3])
         if not f[2] or not fuel then return nil end
-        return { tag = "I", op = f[2], fuel = decFuel(fuel) }
+        return { tag = "I", op = f[2], fuel = decFuel(fuel), front = f[4] }
     elseif tag == "D" or tag == "S" then
         local x, y, z, fc, fuel = tonumber(f[2]), tonumber(f[3]), tonumber(f[4]),
             tonumber(f[5]), tonumber(f[6])
@@ -284,8 +287,14 @@ function state.wipe()
     journalLines = 0
 end
 
-function state.logIntent(op, fuel)
-    return append("I " .. tostring(op) .. " " .. fmtNum(encFuel(fuel)))
+-- front (optional): block name to store with the intent; whitespace is replaced by "_" so
+-- the line stays space separated.
+function state.logIntent(op, fuel, front)
+    local line = "I " .. tostring(op) .. " " .. fmtNum(encFuel(fuel))
+    if type(front) == "string" and front ~= "" then
+        line = line .. " " .. (string.gsub(front, "%s", "_"))
+    end
+    return append(line)
 end
 
 function state.logDone(st, fuel)
@@ -300,12 +309,20 @@ function state.logRefuel(fuel)
 end
 
 -- Parsed journal entries, oldest first. Malformed lines are skipped.
+-- An I line cut off by a crash mid-write (no trailing newline) keeps op/fuel but loses its
+-- block name: a truncated name must never be compared.
 function state.readJournal()
-    local lines = readLines(journalPath())
+    local path = journalPath()
+    local lines = readLines(path)
+    local raw = readFile(path) or ""
+    local cut = raw ~= "" and string.sub(raw, -1) ~= "\n"
     local entries = {}
     for i = 1, #lines do
         local e = parseLine(lines[i])
-        if e then entries[#entries + 1] = e end
+        if e then
+            if i == #lines and cut then e.front = nil end
+            entries[#entries + 1] = e
+        end
     end
     journalLines = #lines
     return entries
