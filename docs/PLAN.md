@@ -142,6 +142,8 @@ Single protocol `TMINER`. Every message: `{v=1, kind=..., from=id, to=id|"all"|"
   6. Chest full → `NEEDS_HELP`, resumes when space appears.
   7. Command for turtle 5 ignored by turtle 6; RETURN_HOME mid-vein returns cleanly.
   8. Corridor N+1 never overlaps corridor N.
+  9–10. Rollback via fuel journal; pocket layout.
+  11–20. 1.18+ Caves & Cliffs world: deepslate band, jagged bedrock, caves/ravines, lava aquifers below Y -55, geodes and dripstone, raw ore drops, large ore veins (raw_*_block), new ore heights, tall terrain (home up to Y 150+), cave mobs and buried ore. Full list in TRACKING.md.
 - If no Lua interpreter is available in the container, WP-T installs one (`apt-get install lua5.4`), or falls back to `luac -p` syntax checks plus manual review. Recorded in TRACKING.md either way.
 - Final step is an in-game checklist for you (TRACKING.md section "In-game acceptance").
 

@@ -66,6 +66,16 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 8 | Corridors never overlap | TODO | |
 | 9 | World rollback after crash (state ahead of world by N moves) recovered via fuel journal | TODO | |
 | 10 | Pocket layout renders in 26x20 without overflow | TODO | |
+| 11 | Deepslate transition: stone/deepslate variants one vein, cobbled_deepslate is trash | TODO | |
+| 12 | Jagged bedrock (-64..-60): downward vein stops at bedrock, run continues | TODO | |
+| 13 | Caves and ravines crossed: no stuck, wall ores found, position exact | TODO | |
+| 14 | Lava aquifers below Y -55 and water aquifers: fluids passed, not stuck | TODO | |
+| 15 | Amethyst geodes + falling pointed dripstone: no stuck, not ore, trash list gaps reported | TODO | |
+| 16 | Raw ore drops fill inventory mid-vein: backtrack, unload, resume at right step | TODO | |
+| 17 | Large iron/copper ore veins: raw_*_block is ore, VEIN_MAX stops cleanly, filler is trash | TODO | |
+| 18 | 1.18 ore heights: FOCUS diamond at -58; SET TARGET_Y 16 + iron mid-job | TODO | |
+| 19 | Cliffs: home at Y 150, 208-block shaft, exact fuel, never strands; negative HOME_Y | TODO | |
+| 20 | Cave mobs (leave vs never leave → timeout NEEDS_HELP) and buried ore found | TODO | |
 
 ## In-game acceptance (you)
 
@@ -73,6 +83,8 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 - [ ] Turtle mines, unloads, goes back to where it was
 - [ ] `/stop` or leave the chunk mid-tunnel, come back: turtle resumes on its own, right spot, right facing
 - [ ] Kill the server process (not /stop) mid-tunnel, restart: turtle recovers position
+- [ ] Mine at Y -58 near lava lakes: turtle passes lava without getting stuck (watch the monitor)
+- [ ] Home on a mountain (Y > 100): turtle gets down and back with fuel to spare
 - [ ] Pocket computer shows the fleet and can send commands
 - [ ] RETURN_HOME from the monitor affects only the chosen turtle
 - [ ] Fill the chest: monitor shows NEEDS_HELP with the reason; empty it: turtle carries on
@@ -92,3 +104,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | WP-C merged. Deviations accepted (RESET_HOME while lost = 'turtle is at home now'). |
 | 2026-10-31 | coordinator | WP-B merged. Integration fixes from WP-B's notes: retreat before goTo home, no-GPS turtles used home Y=0 while TARGET_Y is world Y (added HOME_Y), chest-below-home conflict documented + installer warning. |
 | 2026-10-31 | coordinator | WP-D merged. net.request now prefers found=true home replies across servers; PROTOCOL.md updated with WP-D's gaps. Only WP-T outstanding. |
+| 2026-10-31 | coordinator | Scenarios doubled to 20 with 1.18+ Caves & Cliffs cases (deepslate, jagged bedrock, caves, lava/water aquifers, geodes, dripstone, raw ore drops, large ore veins, ore heights, tall terrain, cave mobs). Sent to WP-T. |
