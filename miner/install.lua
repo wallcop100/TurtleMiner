@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- TurtleMiner installer. The only program that asks questions.
 --
 --   install              check hardware, fetch missing files, ask 4 questions
@@ -246,6 +246,17 @@ local function askNumber(key, question)
     end
 end
 
+-- Without GPS the miner works in a relative frame and needs the real Y of
+-- the home spot so TARGET_Y means the same thing as with GPS.
+local gx, gy = nil, nil
+if gps and rednet.isOpen() then gx, gy = gps.locate(2) end
+if gy then
+    ok("GPS found (Y " .. math.floor(gy + 0.5) .. "), HOME_Y not needed")
+else
+    warn("no GPS: the miner needs this turtle's Y level (F3 screen, the turtle's block)")
+    askNumber("HOME_Y", "Home Y level")
+end
+
 local targetY = askNumber("TARGET_Y", "Mining level Y (-58 for diamonds in 1.18+)")
 local focus
 while true do
@@ -288,7 +299,12 @@ end
 -- ------------------------------------------------------------ done
 
 print("")
-print("Place the turtle at home: a chest behind or below it, optional fuel chest.")
+print("Home spot: chest behind or beside the turtle (NOT below:")
+print("the shaft goes straight down). Optional fuel chest anywhere adjacent.")
+local hasDown, down = turtle.inspectDown()
+if hasDown and type(down) == "table" and tostring(down.name):find("chest") then
+    warn("chest below the turtle: move it behind or beside, or the miner will stop at the shaft")
+end
 print("Change settings later with: set tminer.<KEY> <value>")
 if #missing == 0 or onlyStartup then
     if yes("Start mining now?", false) then

@@ -15,7 +15,7 @@ Parts:
 ## Hardware
 
 - **Turtle** (advanced is nicer, not required) with a **pickaxe** equipped and a **wireless or ender modem** on the other side. Without a modem it still mines, but nothing can see or command it.
-- **At home**: a chest **behind or below** the turtle for loot. Optional second chest with coal/charcoal as a **fuel chest** (detected automatically: an inventory that is mostly fuel). Works without a fuel chest, or with unlimited fuel.
+- **At home**: a chest **behind or beside** the turtle (not below: the shaft goes straight down from the home spot) for loot. Optional second chest with coal/charcoal as a **fuel chest** (detected automatically: an inventory that is mostly fuel). Works without a fuel chest, or with unlimited fuel.
 - **Optional GPS** (4 GPS hosts). With GPS the turtle uses world coordinates and re-checks its position; without GPS it counts moves from home. Each turtle decides at boot.
 - **Server computer** with a wireless/ender modem. If turtles are far away, use ender modems, or several modems on the server (it relays `TMINER` messages between them).
 
@@ -43,7 +43,7 @@ If the monitor runs on the same computer, its `startup.lua` and this one collide
 
 ### 2. Turtle
 
-One command, at the turtle's home spot (chest behind or below):
+One command, at the turtle's home spot (chest behind or beside, not below):
 
 ```
 wget run https://raw.githubusercontent.com/wallcop100/TurtleMiner/main/miner/install.lua
@@ -81,7 +81,8 @@ Settings live in the turtle's settings file under `tminer.<KEY>`. Change them wi
 
 | Key | Default | Remote | Meaning |
 |-----|---------|--------|---------|
-| `TARGET_Y` | -58 | yes | Mining level |
+| `TARGET_Y` | -58 | yes | Mining level (world Y) |
+| `HOME_Y` | -9999 (unset) | yes | World Y of the home spot. Only needed without GPS; `install` asks for it |
 | `BRANCH_LENGTH` | 32 | yes | Branch length, each side |
 | `BRANCH_SPACING` | 3 | yes | Distance between branches (3 = full coverage) |
 | `MAIN_LENGTH` | 64 | yes | Length of each corridor's main tunnel |
@@ -122,7 +123,8 @@ Settings live in the turtle's settings file under `tminer.<KEY>`. Change them wi
 | Reason | What to do |
 |--------|-----------|
 | chest full / `storage_full` | Empty the home chest. It retries every 30 s by itself |
-| no storage / `no_storage` | Put a chest behind or below the home spot |
+| no storage / `no_storage` | Put a chest behind or beside the home spot |
+| no GPS: set HOME_Y | Turtle has no GPS and doesn't know its Y. Send `SET HOME_Y <y>` then `RESUME` (or rerun `install`) |
 | unbreakable block at x,y,z | Bedrock or a protected block in the way. Change `TARGET_Y` or send `RESET_JOB`, then `RESUME` |
 | no fuel / `no_fuel` | Bring fuel to the turtle (or to its chest at home), then `RESUME` |
 | timeout | Something kept blocking it for 60 s (mob farm, other turtle). Clear it, `RESUME` |

@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- TurtleMiner configuration. Do not edit values here; use `install` or
 -- `set tminer.<KEY> <value>` on the turtle, or the SET command from the monitor.
 
@@ -6,7 +6,8 @@ local config = {}
 
 config.DEFAULTS = {
     -- Grid
-    TARGET_Y        = -58,   -- mining level (just above bedrock in 1.18+)
+    TARGET_Y        = -58,   -- mining level (just above bedrock in 1.18+), world Y
+    HOME_Y          = -9999, -- world Y of the home spot; only needed without GPS (-9999 = not set)
     BRANCH_LENGTH   = 32,    -- blocks per branch, each side
     BRANCH_SPACING  = 3,     -- distance between branch centres (3 = 2 solid blocks between, full coverage)
     MAIN_LENGTH     = 64,    -- length of each corridor's main tunnel
@@ -53,6 +54,7 @@ local function isStr(v) return type(v) == "string" and #v > 0 and #v <= 32 end
 
 config.REMOTE_KEYS = {
     TARGET_Y       = isInt(-64, 320),
+    HOME_Y         = isInt(-64, 320),
     BRANCH_LENGTH  = isInt(4, 128),
     BRANCH_SPACING = isInt(2, 8),
     MAIN_LENGTH    = isInt(8, 256),

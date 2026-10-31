@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
@@ -19,6 +19,8 @@ local booted = false
 local ctl = {}
 
 local WORK = { TO_WORK = true, MINING = true, VEIN = true }
+local UNSET_Y = -9999
+local NEED_HOME_Y = "no GPS: set HOME_Y to this turtle's Y level (SET HOME_Y), then RESUME"
 
 -- Runtime control requests (set by commands, consumed by the worker).
 local req = { ret = false, pause = false, resume = false, homeReset = false }
@@ -210,6 +212,15 @@ local function applyCmd(c)
         local ok, err = config.set(key, value)
         if ok then
             cfg[key] = value
+            if key == "HOME_Y" and st and not st.gps then
+                -- Relative frame: move the whole frame so home sits at the real Y.
+                local dy = value - st.home.y
+                st.home.y = st.home.y + dy
+                st.pos.y = st.pos.y + dy
+                if st.lost == NEED_HOME_Y then st.lost = nil end
+                save()
+                sendHomeSave()
+            end
             net.event("info", "set " .. tostring(key) .. " = " .. tostring(value))
         else
             net.event("warn", "SET failed: " .. tostring(err))
@@ -304,6 +315,9 @@ local function goHome()
         end
     end
     if not atHome() then
+        -- Walk back through our own tunnels to the shaft first; a straight goTo
+        -- at mining depth would cut new tunnels through rock.
+        if not st.lost then pcall(mine.retreat) end
         local ok, reason = nav.goTo(st.home)
         if not ok and reason == "no_fuel" then
             inv.refuel(inv.fuelNeeded(st))
@@ -520,6 +534,8 @@ end
 
 -- Boot -----------------------------------------------------------------------
 
+function ctl.event(level, text) net.event(level, text) end
+
 local function initModules()
     nav.init(st, { shouldAbort = shouldAbort, onMove = onMove, save = save, cfg = cfg,
                    onEvent = function(level, text) net.event(level, text) end })
@@ -595,12 +611,18 @@ local function boot()
     end
 
     st.gps = false
-    st.pos, st.home = { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }
+    local hy = (cfg.HOME_Y ~= UNSET_Y) and cfg.HOME_Y or 0
+    st.pos, st.home = { x = 0, y = hy, z = 0 }, { x = 0, y = hy, z = 0 }
     st.facing, st.homeFacing = 0, 0
     sendHello()
     if found then
         st.lost = "state lost: place at home and send RESET_HOME"
         return "NEEDS_HELP", "state lost: place at home and send RESET_HOME"
+    end
+    if cfg.HOME_Y == UNSET_Y then
+        st.lost = NEED_HOME_Y
+        save()
+        return "NEEDS_HELP", NEED_HOME_Y
     end
     sendHomeSave()
     net.event("info", "new home (relative frame)")
