@@ -128,7 +128,7 @@ Single protocol `TMINER`. Every message: `{v=1, kind=..., from=id, to=id|"all"|"
 - `install.lua` on a fresh turtle: checks modem/pickaxe/fuel, asks 4 questions once (label, target Y, storage side, ore focus), writes `miner.cfg` + `startup.lua`. Can also be fed via `install --default`.
 - Updater: run at boot only (and on `UPDATE` cmd when idle at home). Validates each file with `load` before swapping. One reboot max. Never rewrites `startup.lua` unless it's missing.
 - Update server: one manifest of files with versions; moved to `servers/update_server/`.
-- Cleanup: move `old/`, `miner/260216/` into `archive/` (or delete, pending decision D3). `farmer/` untouched.
+- Cleanup: delete `old/`, `miner/260216/`, the old `miner/*.lua` modules, and `servers/update sever/`. `farmer/` untouched.
 
 ### 3.10 Testing (WP-T)
 
@@ -171,13 +171,23 @@ Rules for every agent:
 - Every file starts with `-- Version: x.y.z`.
 - Return: files changed, which root causes (R#) are addressed, open issues. The coordinator copies this into TRACKING.md.
 
-## 5. Decisions needed (defaults used if no answer)
+## 5. Decisions (answered 2026-10-31)
 
-| ID | Question | Default |
-|----|----------|---------|
-| D1 | Rewrite vs patch | Rewrite (as above), monitor kept and updated |
-| D2 | GPS available at the mine? | Support both; GPS optional |
-| D3 | Delete `old/`, `miner/260216/`? | Move to `archive/`, don't delete. `farmer/` untouched |
-| D4 | Keep touchscreen monitor? | Yes |
-| D5 | Keep old protocols for a mixed fleet during cut-over? | No, all turtles update at once via updater |
-| D6 | Fuel chest at home? | Optional, off by default |
+| ID | Question | Answer |
+|----|----------|--------|
+| D1 | Rewrite vs patch | Rewrite |
+| D2 | GPS | Must work with and without, decided per turtle at runtime |
+| D3 | Old copies | Delete `old/`, `miner/260216/`, old `miner/*.lua` modules, `servers/update sever/`. `farmer/` stays |
+| D4 | Monitor | Keep touchscreen, and also run on a pocket computer (phone-sized layout) |
+| D5 | Old protocol compatibility | None, clean break |
+| D6 | Fuel chest | Auto-detect: works with a fuel chest, without one, or with unlimited fuel |
+
+## 6. Changes after decisions
+
+- **Crash recovery uses a move journal, not just a snapshot.** CC writes turtle files to disk instantly, but the world saves every few minutes. After a server crash (not a clean stop) the world can roll back several moves while the files don't. Each move costs exactly 1 fuel, so the journal records fuel after every op and recovery matches the world's real fuel to the right journal entry. GPS, when present, overrides. Details in INTERFACES.md (state, nav).
+- **Mining grid** is a spine + mains + branches layout in the home frame so nothing overlaps and any job step can be resumed by coordinates. Details in INTERFACES.md (mine).
+- **Pocket monitor**: the same `central_monitor.lua` detects a pocket computer and runs in remote mode, using `fleet` snapshots the server broadcasts. Layout must fit 26x20.
+- **Mined-area DB dropped** (per-block traffic was a root cause; nothing used it for decisions).
+- **Server relay** replaces the separate wired/wireless bridge script: any server with several modems relays `TMINER` messages with dedupe and a hop limit.
+- Lua 5.4 is installed in the container for the simulator. CC runs Cobalt (Lua 5.2 semantics): no `//`, no bitwise operators, no `<const>`/`<close>`, no integer/float assumptions (`math.floor` everything that's a coordinate).
+
