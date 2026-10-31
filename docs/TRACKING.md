@@ -31,6 +31,19 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | WP-F Review fixes | agents X/Y/Z | DOING | worktrees | | X: nav/state (#1,#4,#5,#10). Y: inv/mine/sim (#1 scan,#3,#4,#6,#10,#11,#20). Z: miner/monitor/install/README (#7,#8,#9,#12,#14-#19,#21) |
 | WP-G In-game acceptance | you | TODO | | | |
 
+## Army (phase 2, see ARMY_PLAN.md)
+
+| WP | Status | Notes |
+|----|--------|-------|
+| AR-0 Protocol + interfaces | TODO | Blocked on: WP-F done, in-game test, 4 open questions in ARMY_PLAN.md |
+| AR-1 Coordinator | TODO | |
+| AR-2 Turtle group mode | TODO | |
+| AR-3 Bridge (turtle relay + relay program) | TODO | |
+| AR-4 Underground GPS nodes | TODO | |
+| AR-5 Monitor group view | TODO | |
+| AR-T Simulator multi-turtle | TODO | |
+| AR-R Review + in-game | TODO | |
+
 ## Root causes
 
 | # | Short | WP | Status | Verified by |
@@ -140,3 +153,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | Added setup.lua (one-command download per computer from this branch); README install points at the branch. User starting in-game setup while WP-R review runs. |
 | 2026-10-31 | coordinator | User install: 'still missing config.lua, state.lua'. Review #2 (require path under wget run) is the likely cause; fixed + README now uses `wget ... install.lua` then `install`. Launching WP-F fix agents X/Y/Z. |
 | 2026-10-31 | coordinator | WP-F X merged (7cd8432): 25/25 green. Residual: no-GPS turn crash in solid face still needs RESET_HOME; GPS covers it. |
+| 2026-10-31 | coordinator | Army scope answered; docs/ARMY_PLAN.md written. 4 open questions. Starts after WP-F + in-game test. |
