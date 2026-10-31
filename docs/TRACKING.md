@@ -76,21 +76,21 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 4 | MED | Crash between refuel and journal R line → position unknown at home | X + Y | DONE (X 7cd8432; inv logging pending Y) |
 | 5 | MED | Unlimited fuel + no GPS → every dangling move intent = NEEDS_HELP | X | PARTIAL (inspect settles when block changes; air→air still NEEDS_HELP) |
 | 6 | MED | FUEL_KEEP reserve never burned even when stranded | Y | TODO |
-| 7 | MED | DONE can't be left by raising MAX_CORRIDORS; no RESET_JOB button | Z | TODO |
-| 8 | MED | Monitor/pocket can only SET TARGET_Y and FOCUS | Z | TODO |
-| 9 | MED | Lost state + GPS → walks back to old server home record | Z | TODO |
+| 7 | MED | DONE can't be left by raising MAX_CORRIDORS; no RESET_JOB button | Z | DONE (Z) |
+| 8 | MED | Monitor/pocket can only SET TARGET_Y and FOCUS | Z | DONE (Z, SET screen all 16 keys) |
+| 9 | MED | Lost state + GPS → walks back to old server home record | Z | DONE (Z, home_clear added to protocol) |
 | 10 | MED | goHome/backtrack dig anything incl. chests; climb-first fallback near base | X + Y | PARTIAL (nav never digs protected, no climb-first to home; mine.retreat pending Y) |
 | 11 | MED/LOW | Fuel-home uses Manhattan, real route via tunnels is longer | Y | TODO |
-| 12 | LOW/MED | UPDATE parks turtle in IDLE until RESUME | Z | TODO |
+| 12 | LOW/MED | UPDATE parks turtle in IDLE until RESUME | Z | DONE (Z) |
 | 13 | LOW | Installer GPS check always false | coordinator | DONE |
-| 14 | LOW | Defaults reach beyond loaded chunks; nearby homes overlap (docs) | Z | TODO |
-| 15 | LOW | "stuck" → NEEDS_HELP without auto retry | Z | TODO |
-| 16 | LOW | Attacks players in its path (docs/limit) | Z | TODO |
-| 17 | LOW | PAUSED turtle goes home after reboot | Z | TODO |
-| 18 | LOW | miner.lua VERSION constant stale | Z | TODO |
-| 19 | LOW | startup may run updater mid-job when last journal line is R | Z | TODO |
+| 14 | LOW | Defaults reach beyond loaded chunks; nearby homes overlap (docs) | Z | DONE (README) |
+| 15 | LOW | "stuck" → NEEDS_HELP without auto retry | Z | DONE (Z, 5 retries) |
+| 16 | LOW | Attacks players in its path (docs/limit) | Z | DONE (README) |
+| 17 | LOW | PAUSED turtle goes home after reboot | Z | DONE (Z) |
+| 18 | LOW | miner.lua VERSION constant stale | Z | DONE (Z) |
+| 19 | LOW | startup may run updater mid-job when last journal line is R | Z | DONE (Z) |
 | 20 | LOW | Any inventory peripheral (furnace etc.) may be picked as dump | Y | TODO |
-| 21 | LOW | SET HOME_Y shifts pos but not journal history | Z | TODO |
+| 21 | LOW | SET HOME_Y shifts pos but not journal history | Z | DONE (Z, HOME_Y only at home, journal wiped) |
 
 ## Test scenarios (simulator)
 
@@ -155,3 +155,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | WP-F X merged (7cd8432): 25/25 green. Residual: no-GPS turn crash in solid face still needs RESET_HOME; GPS covers it. |
 | 2026-10-31 | coordinator | Army scope answered; docs/ARMY_PLAN.md written. 4 open questions. Starts after WP-F + in-game test. |
 | 2026-10-31 | coordinator | Army questions answered: 2nd shaft allowed, server near or far, GPS hardware ready, carry no-GPS turtles to join, auto bridge on all turtles. |
+| 2026-10-31 | coordinator | WP-F Z merged (3d58acd): 30/30 green. Waiting on WP-F Y (inv/mine/sim). |
