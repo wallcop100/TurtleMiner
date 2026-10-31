@@ -21,7 +21,7 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 |----|-------|--------|-------------------|--------|-------|
 | WP-0 Contracts (PROTOCOL.md, INTERFACES.md, config skeleton) | coordinator | DONE | claude/vigilant-pasteur-g2krss | see log | config.lua written by coordinator; WP-C owns it from here |
 | WP-T Simulator + scenarios | agent 1 | DOING | agent worktree | | Lua 5.4 installed via apt (not persisted across sessions: `apt-get install -y lua5.4`) |
-| WP-A State + Nav | agent 2 | DOING | agent worktree | | |
+| WP-A State + Nav | agent 2 | DONE | merged | 52fd13c (cherry-picked) | 63 throwaway checks pass. Additions: nav.init opts.cfg/onEvent, nav self-snapshots every SNAPSHOT_EVERY, st.lost/st.facingUnknown, S journal line has 7th field. Turn crash without GPS → NEEDS_HELP (inspect heuristic from PLAN not built). Unlimited fuel without GPS can't detect rollback. |
 | WP-B Inv + Mine | agent 3 | DOING | agent worktree | | |
 | WP-C Net + Main | agent 4 | DOING | agent worktree | | |
 | WP-D Monitor | agent 5 | DOING | agent worktree | | |
@@ -34,10 +34,10 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 
 | # | Short | WP | Status | Verified by |
 |---|-------|----|--------|-------------|
-| R1 | Facing not saved on turns | A | TODO | scenario 2 |
-| R2 | Save after move, not before | A | TODO | scenario 2 |
-| R3 | Non-atomic save, corrupt → assumes home | A | TODO | scenario 2 |
-| R4 | GPS facing probe guesses north | A | TODO | scenario 2 (GPS) |
+| R1 | Facing not saved on turns | A | DONE (unit) | scenario 2 |
+| R2 | Save after move, not before | A | DONE (unit) | scenario 2 |
+| R3 | Non-atomic save, corrupt → assumes home | A | DONE (unit) | scenario 2 |
+| R4 | GPS facing probe guesses north | A | DONE (unit) | scenario 2 (GPS) |
 | R5 | Blocking prompts after reboot | B, C | TODO | scenario 1, 6 |
 | R6 | Command listener killed after 1s | C | TODO | scenario 7 |
 | R7 | Branch listener string vs table | B | TODO | scenario 7 |
@@ -47,7 +47,7 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | R11 | Fuel: no refuel, coal dumped, threshold unused | B | TODO | scenario 5 |
 | R12 | New corridor overlaps old | B | TODO | scenario 8 |
 | R13 | returnHome failure ignored | B, C | TODO | scenario 4 |
-| R14 | Gives up after 10 tries | A | TODO | scenario 3 |
+| R14 | Gives up after 10 tries | A | DONE (unit) | scenario 3 |
 | R15 | Per-block network + disk spam | C, D | TODO | review |
 | R16 | Updater misbehaves | E | DONE | WP-E tests; in-game pending |
 | R17 | Duplicate old copies | E | DONE | WP-E tests; in-game pending |
@@ -88,3 +88,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | Decisions D1–D6 answered. Plan updated (journal recovery, grid, pocket monitor). Starting WP-0. |
 | 2026-10-31 | coordinator | WP-0 done: PROTOCOL.md, INTERFACES.md, miner/config.lua. Launched agents for WP-T, A, B, C, D, E in parallel worktrees. |
 | 2026-10-31 | coordinator | WP-E merged. Told WP-A to keep .tm_state/journal format WP-E reads; told WP-C to use require("updater").run and random seq start. |
+| 2026-10-31 | coordinator | WP-A merged. Sent WP-C the nav additions (onEvent, st.lost cleared by RESET_HOME, nav self-snapshots). |
