@@ -57,16 +57,16 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 
 | # | Sev | Finding | Owner | Status |
 |---|-----|---------|-------|--------|
-| 1 | HIGH | Crash during a turn strands turtle (no GPS always; GPS calibrate can't turn/dig in 1x1 tunnel) | X + Y | TODO |
+| 1 | HIGH | Crash during a turn strands turtle (no GPS always; GPS calibrate can't turn/dig in 1x1 tunnel) | X + Y | PARTIAL (nav: GPS calibrate turns/digs, no-GPS inspect check; no-GPS turn crash with same block in front still NEEDS_HELP — X 7cd8432) |
 | 2 | HIGH | `wget run install` can't require its modules; fallback startup never auto-updates | coordinator | DONE (package.path, updater replaces fallback startup, README uses wget + install) |
 | 3 | HIGH/MED | Chest on modem side invisible → loot into fuel chest / fuel chest unused | Y | TODO |
-| 4 | MED | Crash between refuel and journal R line → position unknown at home | X + Y | TODO |
-| 5 | MED | Unlimited fuel + no GPS → every dangling move intent = NEEDS_HELP | X | TODO |
+| 4 | MED | Crash between refuel and journal R line → position unknown at home | X + Y | DONE (X 7cd8432; inv logging pending Y) |
+| 5 | MED | Unlimited fuel + no GPS → every dangling move intent = NEEDS_HELP | X | PARTIAL (inspect settles when block changes; air→air still NEEDS_HELP) |
 | 6 | MED | FUEL_KEEP reserve never burned even when stranded | Y | TODO |
 | 7 | MED | DONE can't be left by raising MAX_CORRIDORS; no RESET_JOB button | Z | TODO |
 | 8 | MED | Monitor/pocket can only SET TARGET_Y and FOCUS | Z | TODO |
 | 9 | MED | Lost state + GPS → walks back to old server home record | Z | TODO |
-| 10 | MED | goHome/backtrack dig anything incl. chests; climb-first fallback near base | X + Y | TODO |
+| 10 | MED | goHome/backtrack dig anything incl. chests; climb-first fallback near base | X + Y | PARTIAL (nav never digs protected, no climb-first to home; mine.retreat pending Y) |
 | 11 | MED/LOW | Fuel-home uses Manhattan, real route via tunnels is longer | Y | TODO |
 | 12 | LOW/MED | UPDATE parks turtle in IDLE until RESUME | Z | TODO |
 | 13 | LOW | Installer GPS check always false | coordinator | DONE |
@@ -139,3 +139,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | Fuel-to-leave fix merged (0a88a2f). Suite 21/21 green. miner.lua bumped to 1.1.2 (two fixes both used 1.1.1). Starting WP-R review. |
 | 2026-10-31 | coordinator | Added setup.lua (one-command download per computer from this branch); README install points at the branch. User starting in-game setup while WP-R review runs. |
 | 2026-10-31 | coordinator | User install: 'still missing config.lua, state.lua'. Review #2 (require path under wget run) is the likely cause; fixed + README now uses `wget ... install.lua` then `install`. Launching WP-F fix agents X/Y/Z. |
+| 2026-10-31 | coordinator | WP-F X merged (7cd8432): 25/25 green. Residual: no-GPS turn crash in solid face still needs RESET_HOME; GPS covers it. |
