@@ -27,6 +27,9 @@ local req = { ret = false, pause = false, resume = false, homeReset = false }
 local helpRetry      = nil    -- fn() -> nextPhase, reason | nil  (NEEDS_HELP auto retry)
 local lastPhase      = nil
 local homeScanned    = false
+-- Fuel at program start; consumed by the first REFUELING that is still at the boot home.
+local bootFuel       = turtle.getFuelLevel()
+local homeOverhead   = 0      -- fuel spent at home after boot (facing calibration) before leaving
 
 -- Helpers --------------------------------------------------------------------
 
@@ -329,11 +332,24 @@ local function goHome()
     return true
 end
 
+-- Fuel to leave home: home -> job start (incl. the vertical shaft) and back, plus
+-- FUEL_MARGIN each way. Pure function of home, job geometry and cfg: same answer every call.
 local function tripFuel()
     local d = 0
     local ok, pos = pcall(mine.jobStart, st.job)
     if ok and type(pos) == "table" then d = nav.dist(st.home, pos) end
     return 2 * d + 2 * (cfg.FUEL_MARGIN or 0)
+end
+
+-- Fuel this boot already burned at home (facing calibration) before the first fuel
+-- check. Added to the reported need and to the fuel we count as "have" so that a
+-- turtle started with exactly the reported need passes the same check next boot.
+local function measureHomeOverhead()
+    if bootFuel and type(bootFuel) == "number" and bootFuel ~= math.huge then
+        local spent = bootFuel - fuelLevel()
+        if spent > 0 then homeOverhead = spent end
+    end
+    bootFuel = nil
 end
 
 local function runUpdate()
@@ -388,6 +404,7 @@ local H = {}
 H.RETURNING = function()
     local ok, reason = goHome()
     if ok then
+        bootFuel, homeOverhead = nil, 0   -- fuel burned getting here is not boot overhead
         st.stats.trips = st.stats.trips + 1
         return "UNLOADING"
     end
@@ -423,20 +440,26 @@ H.REFUELING = function()
     end
     local nxt, why = nextAfterHome()
     if fuelLevel() == math.huge then return nxt, why end
-    local need = tripFuel()
+    measureHomeOverhead()
+    -- One calculation for the check and the report: `need` is what a fresh boot must start with.
+    local trip = tripFuel()
+    local need = trip + homeOverhead
+    local function short() return fuelLevel() + homeOverhead < need end
     local target = cfg.FUEL_TARGET or 0
-    if need > target then target = need end
+    if trip > target then target = trip end
     inv.restockFuel(target)
     if nxt ~= "TO_WORK" then return nxt, why end
-    if fuelLevel() < need then inv.refuel(need) end
-    if fuelLevel() < need then
+    if short() then inv.refuel(trip) end
+    if short() then
         helpRetry = function()
             inv.restockFuel(target)
-            if fuelLevel() < need then inv.refuel(need) end
-            if fuelLevel() >= need then return "REFUELING" end
+            if short() then inv.refuel(trip) end
+            if not short() then return "REFUELING" end
         end
-        return "NEEDS_HELP", "out of fuel (have " .. fuelLevel() .. ", need " .. need .. ")"
+        return "NEEDS_HELP", "out of fuel (have " .. fuelLevel() .. ", need " .. need
+            .. (homeOverhead > 0 and (" incl. " .. homeOverhead .. " used at home since boot") or "") .. ")"
     end
+    homeOverhead = 0
     return "TO_WORK"
 end
 
