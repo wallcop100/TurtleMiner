@@ -105,12 +105,13 @@ end
 -- Frame: map a turtle-believed position/facing to world coords.
 -- gps=true: identity. gps=false: relative frame with home {0,0,0} facing 0 at the
 -- world position/facing the turtle had at first boot.
-function H.frame(homeWorld, homeFacing, gps)
+-- worldY=true: the relative frame's y is already world y (miner with HOME_Y set).
+function H.frame(homeWorld, homeFacing, gps, worldY)
     local fr = {}
     function fr.toWorld(p)
         if gps then return { x = p.x, y = p.y, z = p.z } end
         local x, z = H.rot(p.x, p.z, homeFacing)
-        return { x = homeWorld.x + x, y = homeWorld.y + p.y, z = homeWorld.z + z }
+        return { x = homeWorld.x + x, y = worldY and p.y or (homeWorld.y + p.y), z = homeWorld.z + z }
     end
     function fr.facingToWorld(f)
         if gps then return f end
@@ -336,17 +337,19 @@ function H.minerSetup(opts)
         facing = facing, fuel = opts.fuel or 5000, gps = opts.gps, inventory = opts.inventory })
     t.computer.label = opts.label or ("T" .. t.id)
     ctx.t = t
-    local targetY = opts.gps and (home.y - 6) or -6
+    -- Without GPS the miner needs HOME_Y (the installer asks for it); TARGET_Y is world Y.
+    local targetY = home.y - 6
     ctx.cfg = {
         TARGET_Y = targetY, BRANCH_LENGTH = 4, BRANCH_SPACING = 3, MAIN_LENGTH = 8, MAX_CORRIDORS = 2,
         VEIN_MAX = 16, FUEL_MARGIN = 20, FUEL_KEEP = 4, FUEL_TARGET = 2000, STATUS_INTERVAL = 10,
         AUTO_UPDATE = false, STUCK_TIMEOUT = 60, HELP_RETRY = 30, SNAPSHOT_EVERY = 100,
     }
+    if not opts.gps then ctx.cfg.HOME_Y = home.y end
     for k, v in pairs(opts.settings or {}) do ctx.cfg[k] = v end
     H.writeSettings(t, ctx.cfg)
-    ctx.worldTargetY = opts.gps and ctx.cfg.TARGET_Y or (home.y + ctx.cfg.TARGET_Y)
+    ctx.worldTargetY = ctx.cfg.TARGET_Y
     ctx.srv = opts.srv or H.server()
-    ctx.frame = H.frame(home, facing, opts.gps)
+    ctx.frame = H.frame(home, facing, opts.gps, true)
     ctx.watch = H.watch(t, ctx.srv, { frame = ctx.frame, home = home })
     function ctx.boot(bopts)
         bopts = bopts or {}

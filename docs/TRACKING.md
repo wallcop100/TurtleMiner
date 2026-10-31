@@ -20,7 +20,7 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | WP | Owner | Status | Branch / worktree | Commit | Notes |
 |----|-------|--------|-------------------|--------|-------|
 | WP-0 Contracts (PROTOCOL.md, INTERFACES.md, config skeleton) | coordinator | DONE | claude/vigilant-pasteur-g2krss | see log | config.lua written by coordinator; WP-C owns it from here |
-| WP-T Simulator + scenarios | agent 1 | DOING | agent worktree | | Lua 5.4 installed via apt (not persisted across sessions: `apt-get install -y lua5.4`) |
+| WP-T Simulator + scenarios | agent 1 | DONE | merged | 88599b0, a427369 (cherry-picked) | `lua5.4 test/run.lua`, ~4 s. Selftest 50 checks. Coordinator fixed harness to set HOME_Y for no-GPS turtles. |
 | WP-A State + Nav | agent 2 | DONE | merged | 52fd13c (cherry-picked) | 63 throwaway checks pass. Additions: nav.init opts.cfg/onEvent, nav self-snapshots every SNAPSHOT_EVERY, st.lost/st.facingUnknown, S journal line has 7th field. Turn crash without GPS → NEEDS_HELP (inspect heuristic from PLAN not built). Unlimited fuel without GPS can't detect rollback. |
 | WP-B Inv + Mine | agent 3 | DONE | merged | 0f9637d (cherry-picked) | 67 throwaway checks pass. Additions: st.job.geom (grid frozen per job), mine.retreat(), vein returns count,signal,reason, ctl.event optional, c:ores/forge:ores tags count as ore. |
 | WP-C Net + Main | agent 4 | DONE | merged | 2ff1bd3 (cherry-picked) | 42 stub-harness checks pass; not yet run with real nav/mine. Accepted deviations: RESET_HOME while lost sets pos=home (keeps job); GPS first boot prefers server home record; net.setValidator added; st.flags.afterHome; SET string values coerced. |
@@ -56,26 +56,26 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 
 | # | Scenario | Status | Last result |
 |---|----------|--------|-------------|
-| 1 | Fresh start, 2 corridors, unload, no prompts | TODO | |
-| 2 | Crash after each op type, reboot, position + facing correct (GPS / no GPS) | TODO | |
-| 3 | 20-high gravel column not treated as stuck | TODO | |
-| 4 | Bedrock → NEEDS_HELP, no loop | TODO | |
-| 5 | Low fuel → return, refuel, continue, never strands | TODO | |
-| 6 | Chest full → NEEDS_HELP, resumes when emptied | TODO | |
-| 7 | Commands addressed correctly; RETURN_HOME mid-vein | TODO | |
-| 8 | Corridors never overlap | TODO | |
-| 9 | World rollback after crash (state ahead of world by N moves) recovered via fuel journal | TODO | |
-| 10 | Pocket layout renders in 26x20 without overflow | TODO | |
-| 11 | Deepslate transition: stone/deepslate variants one vein, cobbled_deepslate is trash | TODO | |
-| 12 | Jagged bedrock (-64..-60): downward vein stops at bedrock, run continues | TODO | |
-| 13 | Caves and ravines crossed: no stuck, wall ores found, position exact | TODO | |
-| 14 | Lava aquifers below Y -55 and water aquifers: fluids passed, not stuck | TODO | |
-| 15 | Amethyst geodes + falling pointed dripstone: no stuck, not ore, trash list gaps reported | TODO | |
-| 16 | Raw ore drops fill inventory mid-vein: backtrack, unload, resume at right step | TODO | |
-| 17 | Large iron/copper ore veins: raw_*_block is ore, VEIN_MAX stops cleanly, filler is trash | TODO | |
-| 18 | 1.18 ore heights: FOCUS diamond at -58; SET TARGET_Y 16 + iron mid-job | TODO | |
-| 19 | Cliffs: home at Y 150, 208-block shaft, exact fuel, never strands; negative HOME_Y | TODO | |
-| 20 | Cave mobs (leave vs never leave → timeout NEEDS_HELP) and buried ore found | TODO | |
+| 1 | Fresh start, 2 corridors, unload, no prompts | DONE | PASS |
+| 2 | Crash after each op type, reboot, position + facing correct (GPS / no GPS) | FAIL | FAIL: after crash, recovery ignores journal after last S line → wrong home → 'no storage at home' |
+| 3 | 20-high gravel column not treated as stuck | DONE | PASS |
+| 4 | Bedrock → NEEDS_HELP, no loop | DONE | PASS |
+| 5 | Low fuel → return, refuel, continue, never strands | FAIL | FAIL: coal dumped into chest |
+| 6 | Chest full → NEEDS_HELP, resumes when emptied | DONE | PASS |
+| 7 | Commands addressed correctly; RETURN_HOME mid-vein | DONE | PASS |
+| 8 | Corridors never overlap | DONE | PASS (r=0,11,22) |
+| 9 | World rollback after crash (state ahead of world by N moves) recovered via fuel journal | FAIL | FAIL: full miner reports wrong pos after world rollback (nav-only cases pass) |
+| 10 | Pocket layout renders in 26x20 without overflow | DONE | PASS |
+| 11 | Deepslate transition: stone/deepslate variants one vein, cobbled_deepslate is trash | DONE | PASS |
+| 12 | Jagged bedrock (-64..-60): downward vein stops at bedrock, run continues | DONE | PASS |
+| 13 | Caves and ravines crossed: no stuck, wall ores found, position exact | DONE | PASS |
+| 14 | Lava aquifers below Y -55 and water aquifers: fluids passed, not stuck | DONE | PASS |
+| 15 | Amethyst geodes + falling pointed dripstone: no stuck, not ore, trash list gaps reported | DONE | PASS (TRASH missing smooth_basalt, amethyst_block, pointed_dripstone, dripstone_block, amethyst_shard) |
+| 16 | Raw ore drops fill inventory mid-vein: backtrack, unload, resume at right step | DONE | PASS |
+| 17 | Large iron/copper ore veins: raw_*_block is ore, VEIN_MAX stops cleanly, filler is trash | DONE | PASS (raw_iron_block not detected as ore) |
+| 18 | 1.18 ore heights: FOCUS diamond at -58; SET TARGET_Y 16 + iron mid-job | DONE | PASS |
+| 19 | Cliffs: home at Y 150, 208-block shaft, exact fuel, never strands; negative HOME_Y | FAIL | FAIL: asks 460 fuel to leave, then wants 464 |
+| 20 | Cave mobs (leave vs never leave → timeout NEEDS_HELP) and buried ore found | FAIL | FAIL: nav.forward hangs on a permanent mob (no timeout) |
 
 ## In-game acceptance (you)
 
@@ -105,3 +105,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | WP-B merged. Integration fixes from WP-B's notes: retreat before goTo home, no-GPS turtles used home Y=0 while TARGET_Y is world Y (added HOME_Y), chest-below-home conflict documented + installer warning. |
 | 2026-10-31 | coordinator | WP-D merged. net.request now prefers found=true home replies across servers; PROTOCOL.md updated with WP-D's gaps. Only WP-T outstanding. |
 | 2026-10-31 | coordinator | Scenarios doubled to 20 with 1.18+ Caves & Cliffs cases (deepslate, jagged bedrock, caves, lava/water aquifers, geodes, dripstone, raw ore drops, large ore veins, ore heights, tall terrain, cave mobs). Sent to WP-T. |
+| 2026-10-31 | coordinator | First full run with all real modules: 16/21 pass (incl. selftest). Failing: 2, 5, 9, 19, 20. Launching fix agents. |
