@@ -60,7 +60,7 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2 | Crash after each op type, reboot, position + facing correct (GPS / no GPS) | FAIL | FAIL: after crash, recovery ignores journal after last S line → wrong home → 'no storage at home' |
 | 3 | 20-high gravel column not treated as stuck | DONE | PASS |
 | 4 | Bedrock → NEEDS_HELP, no loop | DONE | PASS |
-| 5 | Low fuel → return, refuel, continue, never strands | FAIL | FAIL: coal dumped into chest |
+| 5 | Low fuel → return, refuel, continue, never strands | DONE | PASS (surplus fuel → fuel chest; single chest still gets surplus beyond FUEL_TARGET) |
 | 6 | Chest full → NEEDS_HELP, resumes when emptied | DONE | PASS |
 | 7 | Commands addressed correctly; RETURN_HOME mid-vein | DONE | PASS |
 | 8 | Corridors never overlap | DONE | PASS (r=0,11,22) |
@@ -70,9 +70,9 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 12 | Jagged bedrock (-64..-60): downward vein stops at bedrock, run continues | DONE | PASS |
 | 13 | Caves and ravines crossed: no stuck, wall ores found, position exact | DONE | PASS |
 | 14 | Lava aquifers below Y -55 and water aquifers: fluids passed, not stuck | DONE | PASS |
-| 15 | Amethyst geodes + falling pointed dripstone: no stuck, not ore, trash list gaps reported | DONE | PASS (TRASH missing smooth_basalt, amethyst_block, pointed_dripstone, dripstone_block, amethyst_shard) |
+| 15 | Amethyst geodes + falling pointed dripstone: no stuck, not ore, trash list gaps reported | DONE | PASS (trash list extended) |
 | 16 | Raw ore drops fill inventory mid-vein: backtrack, unload, resume at right step | DONE | PASS |
-| 17 | Large iron/copper ore veins: raw_*_block is ore, VEIN_MAX stops cleanly, filler is trash | DONE | PASS (raw_iron_block not detected as ore) |
+| 17 | Large iron/copper ore veins: raw_*_block is ore, VEIN_MAX stops cleanly, filler is trash | DONE | PASS (raw_*_block = ore, family 'iron' etc.) |
 | 18 | 1.18 ore heights: FOCUS diamond at -58; SET TARGET_Y 16 + iron mid-job | DONE | PASS |
 | 19 | Cliffs: home at Y 150, 208-block shaft, exact fuel, never strands; negative HOME_Y | FAIL | FAIL: asks 460 fuel to leave, then wants 464 |
 | 20 | Cave mobs (leave vs never leave → timeout NEEDS_HELP) and buried ore found | FAIL | FAIL: nav.forward hangs on a permanent mob (no timeout) |
@@ -107,3 +107,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | Scenarios doubled to 20 with 1.18+ Caves & Cliffs cases (deepslate, jagged bedrock, caves, lava/water aquifers, geodes, dripstone, raw ore drops, large ore veins, ore heights, tall terrain, cave mobs). Sent to WP-T. |
 | 2026-10-31 | coordinator | First full run with all real modules: 16/21 pass (incl. selftest). Failing: 2, 5, 9, 19, 20. Launching fix agents. |
 | 2026-10-31 | coordinator | Fix agents (2/9/20 recovery+mob, 5/15/17 coal+lists, 19 fuel) hit the usage limit before committing anything; resumed. |
+| 2026-10-31 | coordinator | Coal/lists fix merged (8d83b90): 17/21 pass. Remaining: 2, 9, 19, 20. |
