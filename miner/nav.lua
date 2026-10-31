@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- TurtleMiner navigation: journaled moves/turns, retrying dig/attack, goTo, crash recovery,
 -- GPS sync and facing calibration.
 --
@@ -169,8 +169,9 @@ local function moveDig(op, dig)
             if type(err) == "string" and string.find(string.lower(err), "fuel") then
                 return false, "no_fuel"
             end
-            -- entity in the way (mob, falling gravel, player)
-            if turtle[ATTACK[op]]() then progressed = true end
+            -- entity in the way (mob, falling gravel, player). A hit is not progress: a mob
+            -- that never dies or leaves must still end in "timeout" after STUCK_TIMEOUT.
+            turtle[ATTACK[op]]()
         end
         if progressed then
             lastProgress = now()

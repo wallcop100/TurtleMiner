@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.1.1
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
@@ -565,7 +565,12 @@ local function boot()
         normalize(st)
         initModules()
         local prev = st.phase
-        setPhase("RECOVER")
+        -- No save before nav.recover: a snapshot written now would carry the stale snapshot
+        -- position and supersede the journal lines (and dangling intent) written after it.
+        st.phase, st.reason = "RECOVER", nil
+        lastPhase = "RECOVER"
+        net.statusNow()
+        log("RECOVER")
         local ok, reason = nav.recover(st)
         sendHello()
         sendHomeSave()
