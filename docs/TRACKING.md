@@ -26,8 +26,8 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | WP-C Net + Main | agent 4 | DONE | merged | 2ff1bd3 (cherry-picked) | 42 stub-harness checks pass; not yet run with real nav/mine. Accepted deviations: RESET_HOME while lost sets pos=home (keeps job); GPS first boot prefers server home record; net.setValidator added; st.flags.afterHome; SET string values coerced. |
 | WP-D Monitor | agent 5 | DONE | merged | e2cbc83 (cherry-picked) | 69 throwaway checks pass incl. render fuzz 1x1..164x81. central_monitor.lua ~1085 lines (over guideline, accepted). Protocol gaps fixed by coordinator: fleet id, ack forwarding fields, home_get prefers found=true, FOCUS values documented. |
 | WP-E Install / Update / Cleanup | agent 6 | DONE | merged | 88aa268 (cherry-picked) | 37 throwaway tests pass. Deviations: updater called via require().run not shell.run; seq starts random; all-or-nothing updates; installer asks label/Y/focus/corridors (storage auto-detected) |
-| WP-I Integration | coordinator | DOING | claude/vigilant-pasteur-g2krss | | Done so far: goHome calls mine.retreat first; HOME_Y config + installer question for no-GPS turtles; SET HOME_Y shifts relative frame; ctl.event wired; README/installer say chest not below home. Waiting on WP-T to run scenarios. |
-| WP-R Code review | agent 7 | TODO | | | |
+| WP-I Integration | coordinator | DONE | claude/vigilant-pasteur-g2krss | | All 20 scenarios + selftest pass (21/21). Fix commits: 8d83b90 coal/lists, e7951b3 recovery/mob, 0a88a2f fuel-to-leave. |
+| WP-R Code review | agent 7 | DOING | | | |
 | WP-G In-game acceptance | you | TODO | | | |
 
 ## Root causes
@@ -74,7 +74,7 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 16 | Raw ore drops fill inventory mid-vein: backtrack, unload, resume at right step | DONE | PASS |
 | 17 | Large iron/copper ore veins: raw_*_block is ore, VEIN_MAX stops cleanly, filler is trash | DONE | PASS (raw_*_block = ore, family 'iron' etc.) |
 | 18 | 1.18 ore heights: FOCUS diamond at -58; SET TARGET_Y 16 + iron mid-job | DONE | PASS |
-| 19 | Cliffs: home at Y 150, 208-block shaft, exact fuel, never strands; negative HOME_Y | FAIL | FAIL: asks 460 fuel to leave, then wants 464 |
+| 19 | Cliffs: home at Y 150, 208-block shaft, exact fuel, never strands; negative HOME_Y | DONE | PASS (reported need now includes fuel boot spends on GPS calibration) |
 | 20 | Cave mobs (leave vs never leave → timeout NEEDS_HELP) and buried ore found | DONE | PASS (attacks no longer reset stuck timer) |
 
 ## In-game acceptance (you)
@@ -109,3 +109,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | Fix agents (2/9/20 recovery+mob, 5/15/17 coal+lists, 19 fuel) hit the usage limit before committing anything; resumed. |
 | 2026-10-31 | coordinator | Coal/lists fix merged (8d83b90): 17/21 pass. Remaining: 2, 9, 19, 20. |
 | 2026-10-31 | coordinator | Recovery/mob fix merged (e7951b3). Root cause of 2/9: setPhase('RECOVER') saved a stale snapshot over the journal before nav.recover ran. |
+| 2026-10-31 | coordinator | Fuel-to-leave fix merged (0a88a2f). Suite 21/21 green. miner.lua bumped to 1.1.2 (two fixes both used 1.1.1). Starting WP-R review. |

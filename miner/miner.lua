@@ -1,4 +1,4 @@
--- Version: 1.1.1
+-- Version: 1.1.2
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
