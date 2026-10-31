@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- TurtleMiner network layer (TMINER protocol v1, see docs/PROTOCOL.md).
 -- One rednet wrapper for the whole turtle. Never moves the turtle, never relays.
 -- Works offline: with no modem every send is a silent no-op.
@@ -157,7 +157,9 @@ local function handle(msg)
     if msg.kind == "cmd" then
         handleCmd(msg)
     elseif waiting[msg.kind] and waiting[msg.kind] > 0 then
-        replies[msg.kind] = msg
+        -- Several servers may answer; a found=true reply beats found=false.
+        local prev = replies[msg.kind]
+        if not (prev and prev.found and not msg.found) then replies[msg.kind] = msg end
         os.queueEvent(EV_REPLY, msg.kind)
     end
 end
@@ -187,9 +189,11 @@ function net.request(kind, body, replyKind, timeout)
     local timer = os.startTimer(timeout or 3)
     local result
     while true do
-        if replies[replyKind] then result = replies[replyKind]; break end
+        local r = replies[replyKind]
+        -- A found=false answer may be beaten by another server; keep waiting.
+        if r and r.found ~= false then result = r; break end
         local ev = { os.pullEvent() }
-        if ev[1] == "timer" and ev[2] == timer then break end
+        if ev[1] == "timer" and ev[2] == timer then result = replies[replyKind]; break end
         onEvent(ev)
     end
     if result then pcall(os.cancelTimer, timer) end

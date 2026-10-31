@@ -24,7 +24,7 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | WP-A State + Nav | agent 2 | DONE | merged | 52fd13c (cherry-picked) | 63 throwaway checks pass. Additions: nav.init opts.cfg/onEvent, nav self-snapshots every SNAPSHOT_EVERY, st.lost/st.facingUnknown, S journal line has 7th field. Turn crash without GPS → NEEDS_HELP (inspect heuristic from PLAN not built). Unlimited fuel without GPS can't detect rollback. |
 | WP-B Inv + Mine | agent 3 | DONE | merged | 0f9637d (cherry-picked) | 67 throwaway checks pass. Additions: st.job.geom (grid frozen per job), mine.retreat(), vein returns count,signal,reason, ctl.event optional, c:ores/forge:ores tags count as ore. |
 | WP-C Net + Main | agent 4 | DONE | merged | 2ff1bd3 (cherry-picked) | 42 stub-harness checks pass; not yet run with real nav/mine. Accepted deviations: RESET_HOME while lost sets pos=home (keeps job); GPS first boot prefers server home record; net.setValidator added; st.flags.afterHome; SET string values coerced. |
-| WP-D Monitor | agent 5 | DOING | agent worktree | | |
+| WP-D Monitor | agent 5 | DONE | merged | e2cbc83 (cherry-picked) | 69 throwaway checks pass incl. render fuzz 1x1..164x81. central_monitor.lua ~1085 lines (over guideline, accepted). Protocol gaps fixed by coordinator: fleet id, ack forwarding fields, home_get prefers found=true, FOCUS values documented. |
 | WP-E Install / Update / Cleanup | agent 6 | DONE | merged | 88aa268 (cherry-picked) | 37 throwaway tests pass. Deviations: updater called via require().run not shell.run; seq starts random; all-or-nothing updates; installer asks label/Y/focus/corridors (storage auto-detected) |
 | WP-I Integration | coordinator | DOING | claude/vigilant-pasteur-g2krss | | Done so far: goHome calls mine.retreat first; HOME_Y config + installer question for no-GPS turtles; SET HOME_Y shifts relative frame; ctl.event wired; README/installer say chest not below home. Waiting on WP-T to run scenarios. |
 | WP-R Code review | agent 7 | TODO | | | |
@@ -42,7 +42,7 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | R6 | Command listener killed after 1s | C | DONE (unit) | scenario 7 |
 | R7 | Branch listener string vs table | B | DONE (unit) | scenario 7 |
 | R8 | REQUEST_STATUS crash | C | DONE (unit) | scenario 7 |
-| R9 | Commands not addressed to one turtle | D | TODO | scenario 7 |
+| R9 | Commands not addressed to one turtle | D | DONE (unit) | scenario 7 |
 | R10 | Two coroutines moving the turtle | C | DONE (unit) | scenario 7 |
 | R11 | Fuel: no refuel, coal dumped, threshold unused | B | DONE (unit) | scenario 5 |
 | R12 | New corridor overlaps old | B | DONE (unit) | scenario 8 |
@@ -91,3 +91,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | WP-A merged. Sent WP-C the nav additions (onEvent, st.lost cleared by RESET_HOME, nav self-snapshots). |
 | 2026-10-31 | coordinator | WP-C merged. Deviations accepted (RESET_HOME while lost = 'turtle is at home now'). |
 | 2026-10-31 | coordinator | WP-B merged. Integration fixes from WP-B's notes: retreat before goTo home, no-GPS turtles used home Y=0 while TARGET_Y is world Y (added HOME_Y), chest-below-home conflict documented + installer warning. |
+| 2026-10-31 | coordinator | WP-D merged. net.request now prefers found=true home replies across servers; PROTOCOL.md updated with WP-D's gaps. Only WP-T outstanding. |

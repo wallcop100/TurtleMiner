@@ -78,12 +78,18 @@ Dedupe key: `from .. ":" .. boot .. ":" .. seq`. Receivers keep the last 256 key
 ### Server → pocket / any listener
 
 **`fleet`** (every 5 s, `to = "all"`)
-`turtles`: array of the latest `status` tables, each with an added `lastSeen` (ms epoch on the server) and `alert` (string or nil: `"NEEDS_HELP"`, `"ERROR"`, `"SILENT"`).
+`turtles`: array of the latest `status` tables, each with an added `id` (turtle computer ID), `lastSeen` (ms epoch on the server) and `alert` (string or nil: `"NEEDS_HELP"`, `"ERROR"`, `"SILENT"`).
 `server`: `{id, label}`
 
 ### Pocket → server
 
-**`cmd_relay`**: `target` (turtle id), `cmd`, `params`, `id`. The server re-sends it as a `cmd` to `target` and forwards the turtle's `ack` back with `to = pocket id`.
+**`cmd_relay`**: `target` (turtle id), `cmd`, `params`, `id`. The server re-sends it as a `cmd` to `target` and forwards the turtle's `ack` back as `kind="ack"`, `to = pocket id`, fields `{id, ok, err, target}`. If the turtle never acks, the server sends `ok=false, err="no ack"`.
+
+## Duplicate handling
+
+- Server command retries reuse the same `cmd.id` with a new envelope `seq`. Turtles keep recent cmd ids and re-ack repeats without executing them again.
+- Every server answers `home_get`. Turtles wait the full timeout unless a `found=true` reply arrives, and prefer `found=true` over `found=false`.
+- `FOCUS` values are short family names (`"diamond"`, `"iron"`, `"ancient_debris"`); the miner matches them as a substring of the ore family.
 
 ## Update sub-protocol (same `TMINER` protocol)
 
