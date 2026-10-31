@@ -34,7 +34,8 @@ wget run https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilan
 Use `server` on the main computer (monitor + update server, files in `/files/`), `monitor` for extra monitor computers, `pocket` on a pocket computer. Reboot each one afterwards. Then on each turtle at its home spot:
 
 ```
-wget run https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss/miner/install.lua
+wget https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss/miner/install.lua install.lua
+install
 ```
 
 The installer pulls the miner files from the update server. With no update server, run `setup turtle` on the turtle first, then `install`.
@@ -64,10 +65,11 @@ If the monitor runs on the same computer, its `startup.lua` and this one collide
 One command, at the turtle's home spot (chest behind or beside, not below):
 
 ```
-wget run BASE/miner/install.lua
+wget BASE/miner/install.lua install.lua
+install
 ```
 
-The installer checks modem, pickaxe and fuel, fetches all miner files from the update server, asks four questions (name, mining Y, ore focus, number of corridors), writes the settings and `startup.lua`. `install --default` skips the questions. Then reboot, or run `miner`.
+The installer checks modem, pickaxe and fuel, fetches all miner files from the update server, asks four or five questions (Y level too when there is no GPS) (name, mining Y, ore focus, number of corridors), writes the settings and `startup.lua`. `install --default` skips the questions. Then reboot, or run `miner`.
 
 No update server? Copy the `miner/*.lua` files onto the turtle by hand (disk or `wget`), then run `install`.
 

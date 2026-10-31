@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.1.1
 -- TurtleMiner installer. The only program that asks questions.
 --
 --   install              check hardware, fetch missing files, ask 4 questions
@@ -6,6 +6,9 @@
 --
 -- A fresh turtle only needs this file: missing miner files are fetched from the
 -- update server (rednet protocol "TMINER").
+
+-- Under `wget run`, require() would search the wget program's folder, not /.
+package.path = "/?.lua;/?;" .. package.path
 
 local args = { ... }
 local USE_DEFAULTS = false
@@ -249,7 +252,13 @@ end
 -- Without GPS the miner works in a relative frame and needs the real Y of
 -- the home spot so TARGET_Y means the same thing as with GPS.
 local gx, gy = nil, nil
-if gps and rednet.isOpen() then gx, gy = gps.locate(2) end
+if gps and modem then
+    local side = peripheral.getName(modem)
+    local wasOpen = rednet.isOpen(side)
+    if not wasOpen then pcall(rednet.open, side) end
+    gx, gy = gps.locate(2)
+    if not wasOpen then pcall(rednet.close, side) end
+end
 if gy then
     ok("GPS found (Y " .. math.floor(gy + 0.5) .. "), HOME_Y not needed")
 else
@@ -277,7 +286,7 @@ if not fs.exists("startup.lua") and not fs.exists("startup") then
     local h = fs.open("startup.lua", "w")
     h.write(STARTUP_FALLBACK)
     h.close()
-    warn("wrote a minimal startup.lua (no auto-update). Run 'updater' later to get the full one.")
+    warn("wrote a minimal startup.lua; the updater replaces it with the full one when the server has it")
 else
     local name = fs.exists("startup.lua") and "startup.lua" or "startup"
     local h = fs.open(name, "r")

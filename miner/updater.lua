@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- TurtleMiner updater. Talks to the update server over rednet protocol "TMINER"
 -- (update_check / update_manifest / file_get / file, see docs/PROTOCOL.md).
 --
@@ -233,7 +233,9 @@ function M.check(opts)
                 local have = M.fileVersion(e.name)
                 local need
                 if M.PROTECTED[e.name] then
-                    need = not exists
+                    -- Only installed when missing, or replacing the installer's minimal fallback.
+                    local cur = exists and readAll(e.name) or ""
+                    need = (not exists) or (cur:find("Written by install", 1, true) ~= nil)
                 else
                     need = (not exists) or M.compare(e.version, have) > 0
                 end

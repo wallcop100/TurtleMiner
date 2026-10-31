@@ -27,7 +27,8 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | WP-D Monitor | agent 5 | DONE | merged | e2cbc83 (cherry-picked) | 69 throwaway checks pass incl. render fuzz 1x1..164x81. central_monitor.lua ~1085 lines (over guideline, accepted). Protocol gaps fixed by coordinator: fleet id, ack forwarding fields, home_get prefers found=true, FOCUS values documented. |
 | WP-E Install / Update / Cleanup | agent 6 | DONE | merged | 88aa268 (cherry-picked) | 37 throwaway tests pass. Deviations: updater called via require().run not shell.run; seq starts random; all-or-nothing updates; installer asks label/Y/focus/corridors (storage auto-detected) |
 | WP-I Integration | coordinator | DONE | claude/vigilant-pasteur-g2krss | | All 20 scenarios + selftest pass (21/21). Fix commits: 8d83b90 coal/lists, e7951b3 recovery/mob, 0a88a2f fuel-to-leave. |
-| WP-R Code review | agent 7 | DOING | | | |
+| WP-R Code review | agent 7 | DONE | read-only | | 21 findings (2 high). #2 and #13 fixed by coordinator; rest in WP-F below. |
+| WP-F Review fixes | agents X/Y/Z | DOING | worktrees | | X: nav/state (#1,#4,#5,#10). Y: inv/mine/sim (#1 scan,#3,#4,#6,#10,#11,#20). Z: miner/monitor/install/README (#7,#8,#9,#12,#14-#19,#21) |
 | WP-G In-game acceptance | you | TODO | | | |
 
 ## Root causes
@@ -51,6 +52,32 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | R15 | Per-block network + disk spam | C, D | DONE (unit) | review |
 | R16 | Updater misbehaves | E | DONE | WP-E tests; in-game pending |
 | R17 | Duplicate old copies | E | DONE | WP-E tests; in-game pending |
+
+## Review findings (WP-R, 2026-10-31)
+
+| # | Sev | Finding | Owner | Status |
+|---|-----|---------|-------|--------|
+| 1 | HIGH | Crash during a turn strands turtle (no GPS always; GPS calibrate can't turn/dig in 1x1 tunnel) | X + Y | TODO |
+| 2 | HIGH | `wget run install` can't require its modules; fallback startup never auto-updates | coordinator | DONE (package.path, updater replaces fallback startup, README uses wget + install) |
+| 3 | HIGH/MED | Chest on modem side invisible → loot into fuel chest / fuel chest unused | Y | TODO |
+| 4 | MED | Crash between refuel and journal R line → position unknown at home | X + Y | TODO |
+| 5 | MED | Unlimited fuel + no GPS → every dangling move intent = NEEDS_HELP | X | TODO |
+| 6 | MED | FUEL_KEEP reserve never burned even when stranded | Y | TODO |
+| 7 | MED | DONE can't be left by raising MAX_CORRIDORS; no RESET_JOB button | Z | TODO |
+| 8 | MED | Monitor/pocket can only SET TARGET_Y and FOCUS | Z | TODO |
+| 9 | MED | Lost state + GPS → walks back to old server home record | Z | TODO |
+| 10 | MED | goHome/backtrack dig anything incl. chests; climb-first fallback near base | X + Y | TODO |
+| 11 | MED/LOW | Fuel-home uses Manhattan, real route via tunnels is longer | Y | TODO |
+| 12 | LOW/MED | UPDATE parks turtle in IDLE until RESUME | Z | TODO |
+| 13 | LOW | Installer GPS check always false | coordinator | DONE |
+| 14 | LOW | Defaults reach beyond loaded chunks; nearby homes overlap (docs) | Z | TODO |
+| 15 | LOW | "stuck" → NEEDS_HELP without auto retry | Z | TODO |
+| 16 | LOW | Attacks players in its path (docs/limit) | Z | TODO |
+| 17 | LOW | PAUSED turtle goes home after reboot | Z | TODO |
+| 18 | LOW | miner.lua VERSION constant stale | Z | TODO |
+| 19 | LOW | startup may run updater mid-job when last journal line is R | Z | TODO |
+| 20 | LOW | Any inventory peripheral (furnace etc.) may be picked as dump | Y | TODO |
+| 21 | LOW | SET HOME_Y shifts pos but not journal history | Z | TODO |
 
 ## Test scenarios (simulator)
 
@@ -111,3 +138,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | Recovery/mob fix merged (e7951b3). Root cause of 2/9: setPhase('RECOVER') saved a stale snapshot over the journal before nav.recover ran. |
 | 2026-10-31 | coordinator | Fuel-to-leave fix merged (0a88a2f). Suite 21/21 green. miner.lua bumped to 1.1.2 (two fixes both used 1.1.1). Starting WP-R review. |
 | 2026-10-31 | coordinator | Added setup.lua (one-command download per computer from this branch); README install points at the branch. User starting in-game setup while WP-R review runs. |
+| 2026-10-31 | coordinator | User install: 'still missing config.lua, state.lua'. Review #2 (require path under wget run) is the likely cause; fixed + README now uses `wget ... install.lua` then `install`. Launching WP-F fix agents X/Y/Z. |
