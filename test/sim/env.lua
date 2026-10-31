@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- Builds the CC global environment for one boot of one sim computer:
 -- os, sleep, parallel, rednet, peripheral, gps, settings, textutils, term,
 -- window, paintutils, colors, keys, shell, require, fs, turtle, pocket, io,
@@ -766,7 +766,12 @@ function Env.program(sim, c, G, name, args)
         _G = G, string = G.string, table = G.table, math = G.math, coroutine = G.coroutine,
         os = G.os, io = G.io, utf8 = G.utf8, bit32 = G.bit32,
     }
-    local package = { loaded = loaded, path = "?;?.lua;?/init.lua", preload = {}, config = "/\n;\n?\n!\n-" }
+    -- Like CC's cc.require: relative patterns resolve against the running program's directory,
+    -- absolute ones ("/...") against the root; /rom module dirs are on the default path.
+    local progDir = path:match("^(.*)/[^/]*$") or ""
+    local package = { loaded = loaded, preload = {}, config = "/\n;\n?\n!\n-",
+        path = "?;?.lua;?/init.lua;/rom/modules/main/?;/rom/modules/main/?.lua;/rom/modules/main/?/init.lua"
+            .. (c.turtle and ";/rom/modules/turtle/?;/rom/modules/turtle/?.lua;/rom/modules/turtle/?/init.lua" or "") }
     package.searchers = {}
     local loading = {}
     local function require(modname)
@@ -780,7 +785,9 @@ function Env.program(sim, c, G, name, args)
         local base = modname:gsub("%.", "/")
         local tried = {}
         for pat in package.path:gmatch("[^;]+") do
-            local p = FS.norm((pat:gsub("%?", base)))
+            local sp = pat:gsub("%?", base)
+            if sp:sub(1, 1) ~= "/" and progDir ~= "" then sp = progDir .. "/" .. sp end
+            local p = FS.norm(sp)
             tried[#tried + 1] = "  /" .. p
             local src = c.fs.files[p]
             if src then

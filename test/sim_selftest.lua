@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- Self-test of the simulator with tiny stub programs, so the harness is proven
 -- before (and independently of) the real miner modules.
 -- Run: lua5.4 test/run.lua selftest
@@ -248,6 +248,20 @@ return {
         t.fs:write("startup.lua", "shell.run('main'); return shell.run('main'), _G.ran")
         r = sim.boot(t, { "startup" })
         ok(r.status == "exit" and r.ret[1] == true and r.ret[2] == 2, "shell.run/require failed: %s %s", r.status, tostring(r.err))
+
+        -- 9b. require resolves like CC: relative to the program's dir, "/..." from root ------
+        sim.reset()
+        w = sim.world()
+        t = sim.turtle(w, { id = 13, install = false })
+        t.fs:write("rootmod.lua", "return { v = 'root' }")
+        t.fs:write("sub/submod.lua", "return { v = 'sub' }")
+        t.fs:write("sub/prog.lua", "local okR = pcall(require, 'rootmod'); local s = require('submod'); return okR, s.v")
+        t.fs:write("sub/prog2.lua", "package.path = '/?.lua;' .. package.path; return require('rootmod').v")
+        r = sim.boot(t, { "sub/prog" })
+        ok(r.status == "exit" and r.ret[1] == false and r.ret[2] == "sub",
+            "program in sub/ must find sub/submod but not /rootmod: %s %s %s", r.status, tostring(r.ret and r.ret[1]), tostring(r.err))
+        r = sim.boot(t, { "sub/prog2" })
+        ok(r.status == "exit" and r.ret[1] == "root", "package.path '/?.lua' must reach root modules: %s %s", r.status, tostring(r.err))
 
         -- 10. real repo files are installed into turtle fs -----------------------------
         sim.reset()

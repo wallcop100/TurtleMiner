@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- Scenario helpers: pass/fail/skip plumbing, crash predicates, a fake TMINER
 -- server (virtual rednet node), truth-vs-belief watchers and the standard
 -- "turtle at home with a chest behind it" setup.
@@ -320,11 +320,26 @@ function H.minerSetup(opts)
     local F = H.DIRS[facing]
     local L = H.DIRS[(facing + 3) % 4]
     local ctx = { w = w, home = home, facing = facing }
-    ctx.chestPos = { x = home.x - F.x, y = home.y, z = home.z - F.z }
-    w:chest(ctx.chestPos.x, ctx.chestPos.y, ctx.chestPos.z, opts.chest or {}, { size = opts.chestSize })
+    -- world position of a side of the home cell (relative to the home facing)
+    local function sidePos(side)
+        local d
+        if side == "top" then return { x = home.x, y = home.y + 1, z = home.z } end
+        if side == "bottom" then return { x = home.x, y = home.y - 1, z = home.z } end
+        if side == "front" then d = F
+        elseif side == "back" then d = H.DIRS[(facing + 2) % 4]
+        elseif side == "left" then d = L
+        else d = H.DIRS[(facing + 1) % 4] end
+        return { x = home.x + d.x, y = home.y, z = home.z + d.z }
+    end
+    ctx.sidePos = sidePos
+    -- dump chest: behind by default (opts.chestSide); opts.chestName for other blocks
+    ctx.chestPos = sidePos(opts.chestSide or "back")
+    w:chest(ctx.chestPos.x, ctx.chestPos.y, ctx.chestPos.z, opts.chest or {},
+        { size = opts.chestSize, name = opts.chestName })
     if opts.fuelChest then
-        -- on top: a chest on the modem side (left) is shadowed by the equipped modem, as in CC
-        ctx.fuelChestPos = { x = home.x, y = home.y + 1, z = home.z }
+        -- default on top; opts.fuelChestSide = "left" puts it behind the equipped modem,
+        -- where peripheral can't see it (as in CC) and only inspect finds it
+        ctx.fuelChestPos = sidePos(opts.fuelChestSide or "top")
         w:chest(ctx.fuelChestPos.x, ctx.fuelChestPos.y, ctx.fuelChestPos.z, opts.fuelChest)
     end
     if opts.gps and not opts.enclosedHome then
@@ -658,6 +673,82 @@ function H.fillWhenAway(ctx, name, free, dist)
         for s = 1, 16 do if not ctx.t.inv[s] then empty[#empty + 1] = s end end
         for i = 1, #empty - free do ctx.t.inv[empty[i]] = { name = name, count = 64 } end
     end)
+end
+
+---------------------------------------------------------------------------
+-- mine/inv driver: run a snippet against the real modules without miner.lua
+---------------------------------------------------------------------------
+-- The prelude loads config/state/nav/inv/mine for a no-GPS turtle whose home is world
+-- (0,0,0) facing north (so the relative frame is the world frame), puts it at drv.cfg's
+-- pos/facing and inits every module. The body sees: cfg, st, state, nav, inv, mine, ctlLog.
+-- ctl.check() calls drv.cfg's onCheck snippet (string, may be nil) and logs
+-- {pos, need = inv.fuelNeeded(st)} each time.
+H.MINE_PRELUDE = [==[
+local h = fs.open("drv.cfg", "r")
+local dcfg = textutils.unserialize(h.readAll())
+h.close()
+local config = require("config")
+local state = require("state")
+local nav = require("nav")
+local inv = require("inv")
+local mine = require("mine")
+local cfg = config.load()
+local st = state.new({ x = 0, y = 0, z = 0 }, 0, false)
+if dcfg.pos then st.pos = { x = dcfg.pos.x, y = dcfg.pos.y, z = dcfg.pos.z } end
+st.facing = dcfg.facing or 0
+if dcfg.job then st.job = dcfg.job end
+st.phase = "MINING"
+state.save(st)
+nav.init(st, {
+    shouldAbort = function() return false end,
+    onMove = function() end,
+    save = function() return state.save(st) end,
+})
+local ctlLog = {}
+inv.init(st, cfg, nav)
+if not dcfg.noMineInit then
+    mine.init(st, cfg, nav, inv, { check = function()
+        ctlLog[#ctlLog + 1] = { pos = { x = st.pos.x, y = st.pos.y, z = st.pos.z }, need = inv.fuelNeeded(st) }
+        return nil
+    end, event = function() end })
+end
+]==]
+
+-- opts: pos (world), facing, fuel, inventory, settings, job, noMineInit, world(fn w), body (Lua
+-- source run after the prelude; its return values come back as r.ret), crashAt, id.
+-- Returns ctx with w, t, run().
+function H.mineDriver(opts)
+    opts = opts or {}
+    local w = opts.w or sim.world()
+    local pos = opts.pos or { x = 0, y = 0, z = 0 }
+    local t = sim.turtle(w, { id = opts.id or 1, pos = pos, facing = opts.facing or 0,
+        fuel = opts.fuel or 1000, inventory = opts.inventory })
+    local cfg = { TARGET_Y = -6, HOME_Y = 0, BRANCH_LENGTH = 4, BRANCH_SPACING = 3, MAIN_LENGTH = 8,
+        MAX_CORRIDORS = 2, VEIN_MAX = 16, FUEL_MARGIN = 20, FUEL_KEEP = 4, FUEL_TARGET = 2000 }
+    for k, v in pairs(opts.settings or {}) do cfg[k] = v end
+    H.writeSettings(t, cfg)
+    if opts.world then opts.world(w, t) end
+    local ctx = { w = w, t = t, cfg = cfg }
+    function ctx.run(body, ropts)
+        ropts = ropts or {}
+        t.fs:write("drv.cfg", sim.textutils.serialize({ pos = pos, facing = opts.facing or 0,
+            job = opts.job, noMineInit = opts.noMineInit }))
+        t.fs:write("drv.lua", H.MINE_PRELUDE .. "\n" .. (body or opts.body or "return true"))
+        local r = sim.boot(t, { "drv" }, { crashAt = ropts.crashAt, maxTime = ropts.maxTime or 600 })
+        if r.status ~= "exit" and not ropts.crashAt then
+            H.fail("driver did not finish: %s %s", tostring(r.status), tostring(r.err or r.why))
+        end
+        return r
+    end
+    -- open (air) every cell of a list of {x,y,z} or a box
+    function ctx.open(x1, y1, z1, x2, y2, z2)
+        for x = math.min(x1, x2), math.max(x1, x2) do
+            for y = math.min(y1, y2), math.max(y1, y2) do
+                for z = math.min(z1, z2), math.max(z1, z2) do w:set(x, y, z, "air") end
+            end
+        end
+    end
+    return ctx
 end
 
 return H

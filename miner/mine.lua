@@ -1,4 +1,4 @@
--- Version: 1.0.1
+-- Version: 1.0.2
 -- TurtleMiner mining pattern (WP-B).
 -- Grid in the home frame (F = homeFacing, R = homeFacing + 1), all at cfg.TARGET_Y:
 --   shaft  : home x/z, home y -> TARGET_Y
@@ -18,7 +18,10 @@ local DVEC = { [0] = { 0, -1 }, [1] = { 1, 0 }, [2] = { 0, 1 }, [3] = { -1, 0 } 
 
 local stepCount = 0
 local dug = {}         -- positions opened by vein mining this run (count as fresh tunnel)
+local seen = {}        -- cells inspected this run (no need to turn and look again)
 local oreSet, oreSrc = nil, nil
+local ready = false    -- mine.init called
+local veinFrom, veinPath = nil, nil   -- while in a vein: its start position and the path stack
 
 -- ------------------------------------------------------------------ helpers
 
@@ -106,7 +109,28 @@ local function isProtected(data)
     local n = type(data) == "table" and data.name
     if type(n) ~= "string" then return false end
     return n:find("chest") ~= nil or n:find("barrel") ~= nil or n:find("shulker") ~= nil
-        or n:find("^computercraft:") ~= nil
+        or n:find("crate") ~= nil or n:find("^computercraft:") ~= nil
+end
+mine.isProtected = isProtected
+
+-- Is world cell p part of the planned grid (shaft bottom, spine, mains, branches of every
+-- corridor below MAX_CORRIDORS)? Such a cell is open already or will be dug (and its ore
+-- taken) by the step that enters it, so a scan never needs to turn to look at it.
+local function isTunnel(p)
+    if p.y ~= targetY() then return false end
+    local f, r = frame(p)
+    local g = geom()
+    local w = width()
+    local maxC = math.max(1, cfg.MAX_CORRIDORS or 1)
+    local lastR = (maxC - 1) * w
+    if f == 0 and r == 0 then return true end
+    if f == 1 and r >= 0 and r <= lastR then return true end
+    local c = math.floor(r / w + 0.5)
+    if c < 0 or c >= maxC then return false end
+    local off = math.abs(r - c * w)
+    if off == 0 then return f >= 1 and f <= g.ml end
+    if off > g.bl or f < 1 + g.sp then return false end
+    return (f - 1) % g.sp == 0 and (f - 1) / g.sp - 1 < numBranches()
 end
 
 -- ------------------------------------------------------------------ ores
@@ -151,6 +175,7 @@ end
 -- ------------------------------------------------------------------ primitive moves
 
 local function look(d)
+    seen[key(neighbor(st.pos, d))] = true
     if d == UP then return turtle.inspectUp() end
     if d == DOWN then return turtle.inspectDown() end
     if st.facing ~= d then nav.face(d) end
@@ -164,12 +189,27 @@ local function moveDir(d, dig)
     return nav.forward(dig)
 end
 
+-- Move in direction d, digging what is in the way, but never a protected block (chest,
+-- computer, ...): that fails with reason "protected" and a detail naming the block.
+local function safeMove(d)
+    local present, data = look(d)
+    if present and isProtected(data) then
+        local p = st.pos
+        return false, "protected", "protected block " .. tostring(data.name) .. " next to "
+            .. p.x .. "," .. p.y .. "," .. p.z
+    end
+    return moveDir(d, true)
+end
+
+-- Undo a step made in direction d. Backs up without turning when the cell is open.
 local function backStep(d)
-    if d == UP then return nav.down(true) end
-    if d == DOWN then return nav.up(true) end
-    if st.facing == d then return nav.back() end
-    nav.face((d + 2) % 4)
-    return nav.forward(true)
+    if d == UP then return safeMove(DOWN) end
+    if d == DOWN then return safeMove(UP) end
+    if st.facing == d then
+        local ok, reason = nav.back(false)
+        if ok or reason ~= "blocked" then return ok, reason end
+    end
+    return safeMove((d + 2) % 4)
 end
 
 local function digDir(d)
@@ -208,18 +248,25 @@ end
 -- backtracks along its own path, and always ends at the start position and facing.
 -- Returns count, signal|nil, reason. Signals: "return"/"stop" (command), "stuck".
 -- Running out of room or fuel just ends the vein; the caller's next step reports it.
-function mine.vein(family)
+function mine.vein(family, noRestore)
     local prevPhase = st.phase
     st.phase = "VEIN"
     local startFacing = st.facing
     local checked = { [key(st.pos)] = true }
     local path = {}
+    veinFrom, veinPath = { x = st.pos.x, y = st.pos.y, z = st.pos.z }, path
+    local function done(...)
+        veinFrom, veinPath = nil, nil
+        st.phase = prevPhase
+        return ...
+    end
     local count, sig, why = 0, nil, nil
     local max = cfg.VEIN_MAX or 64
     local s = stats()
 
     local function findNext()
-        local dirs = { UP, DOWN, st.facing, (st.facing + 1) % 4, (st.facing + 3) % 4, (st.facing + 2) % 4 }
+        -- front, then round one way: at most 3 turns per cell
+        local dirs = { UP, DOWN, st.facing, (st.facing + 1) % 4, (st.facing + 2) % 4, (st.facing + 3) % 4 }
         for _, d in ipairs(dirs) do
             local k = key(neighbor(st.pos, d))
             if not checked[k] then
@@ -257,29 +304,29 @@ function mine.vein(family)
             end -- unbreakable/timeout: that block stays marked checked and is skipped
         else
             if #path == 0 then break end
-            local ok, reason = backStep(table.remove(path))
+            local ok, reason, detail = backStep(path[#path])
             if not ok then
-                st.phase = prevPhase
-                return count, "stuck", "vein backtrack failed: " .. tostring(reason)
+                return done(count, "stuck", "vein backtrack failed: " .. tostring(detail or reason))
             end
+            table.remove(path)
         end
     end
     while #path > 0 do
-        local ok, reason = backStep(table.remove(path))
+        local ok, reason, detail = backStep(path[#path])
         if not ok then
-            st.phase = prevPhase
-            return count, "stuck", "vein backtrack failed: " .. tostring(reason)
+            return done(count, "stuck", "vein backtrack failed: " .. tostring(detail or reason))
         end
+        table.remove(path)
     end
-    if st.facing ~= startFacing then nav.face(startFacing) end
-    st.phase = prevPhase
+    -- callers inside mine.lua turn to whatever they look at next anyway (saves turns)
+    if not noRestore and st.facing ~= startFacing then nav.face(startFacing) end
     if count > 1 then event("info", "vein " .. family .. " x" .. count) end
-    return count, sig, why
+    return done(count, sig, why)
 end
 
 local function takeOre(d, family)
     if cfg.VEIN_MINING then
-        local _, sig, why = mine.vein(family)
+        local _, sig, why = mine.vein(family, true)
         return sig, why
     end
     if digDir(d) then
@@ -293,13 +340,21 @@ end
 -- ------------------------------------------------------------------ walking
 
 -- Look at the five open faces after moving in direction d and take any wanted ore.
+-- Side faces cost turns (and a turn is what a crash leaves ambiguous), so a side face is only
+-- looked at when it was not inspected yet this run and is not a planned tunnel cell. Up, down
+-- and front need no turn and are always inspected.
 local function scan(d)
-    local dirs
+    local cand, free
     if d == UP or d == DOWN then
         local f = st.facing
-        dirs = { d, f, (f + 1) % 4, (f + 2) % 4, (f + 3) % 4 }
+        cand, free = { d, f, (f + 1) % 4, (f + 2) % 4, (f + 3) % 4 }, 2
     else
-        dirs = { UP, DOWN, d, (d + 3) % 4, (d + 1) % 4 }
+        cand, free = { UP, DOWN, d, (d + 3) % 4, (d + 1) % 4 }, 3
+    end
+    local dirs = {}
+    for i, dir in ipairs(cand) do
+        local n = neighbor(st.pos, dir)
+        if i <= free or (not seen[key(n)] and not isTunnel(n)) then dirs[#dirs + 1] = dir end
     end
     for _, dir in ipairs(dirs) do
         local present, data = look(dir)
@@ -361,30 +416,28 @@ local function step(d)
 end
 
 -- Walk along one frame axis ("f", "r" or "y") to `target`, calling onStep after each move.
+local function axisPos(axis)
+    if axis == "y" then return st.pos.y end
+    local f, r = frame(st.pos)
+    if axis == "f" then return f end
+    return r
+end
+
+local function axisDir(axis, up)
+    if axis == "y" then return up and UP or DOWN end
+    local d = (axis == "f") and FD() or RD()
+    return up and d or (d + 2) % 4
+end
+
 local function lineTo(axis, target, onStep)
-    local function cur()
-        if axis == "y" then return st.pos.y end
-        local f, r = frame(st.pos)
-        if axis == "f" then return f end
-        return r
-    end
-    local start = cur()
-    local limit = math.abs(target - start) + 1
+    local limit = math.abs(target - axisPos(axis)) + 1
     local n = 0
     while true do
-        local c = cur()
+        local c = axisPos(axis)
         if c == target then return nil end
         n = n + 1
         if n > limit then return "stuck", "position not advancing on axis " .. axis end
-        local d
-        if axis == "y" then
-            d = (target > c) and UP or DOWN
-        elseif axis == "f" then
-            d = (target > c) and FD() or (FD() + 2) % 4
-        else
-            d = (target > c) and RD() or (RD() + 2) % 4
-        end
-        local sig, why = step(d)
+        local sig, why = step(axisDir(axis, target > c))
         if sig then return sig, why end
         if onStep then onStep() end
     end
@@ -472,6 +525,9 @@ end
 
 function mine.init(st_, cfg_, nav_, inv_, ctl_)
     st, cfg, nav, inv, ctl = st_, cfg_, nav_, inv_, ctl_
+    ready = true
+    seen = {}
+    veinFrom, veinPath = nil, nil
     dug = {}
     stepCount = 0
     oreSet, oreSrc = nil, nil
@@ -484,6 +540,7 @@ end
 
 function mine.run()
     dug = {}
+    seen = {}
     if type(st.flags) == "table" and st.flags.resetJob and atHome() then
         st.job = newJob()
         st.flags.resetJob = false
@@ -516,46 +573,70 @@ end
 -- Not part of the mining loop: walk back to the shaft bottom through the grid's own tunnels
 -- (no ore checks, no commands), so the caller's nav.goTo(home) is a straight climb.
 local function rawLine(axis, target)
-    local function cur()
-        if axis == "y" then return st.pos.y end
-        local f, r = frame(st.pos)
-        if axis == "f" then return f end
-        return r
-    end
-    local limit = math.abs(target - cur()) + 1
-    for _ = 1, limit do
-        local c = cur()
+    for _ = 1, math.abs(target - axisPos(axis)) + 1 do
+        local c = axisPos(axis)
         if c == target then return true end
-        local d
-        if axis == "y" then d = (target > c) and UP or DOWN
-        elseif axis == "f" then d = (target > c) and FD() or (FD() + 2) % 4
-        else d = (target > c) and RD() or (RD() + 2) % 4 end
-        local ok, reason = moveDir(d, true)
-        if not ok then return false, reason end
+        local ok, reason, detail = safeMove(axisDir(axis, target > c))
+        if not ok then return false, reason, detail end
     end
-    return cur() == target, "not advancing"
+    return axisPos(axis) == target, "not advancing"
 end
 
+-- Returns true, or false, reason, detail. reason is a nav reason ("no_fuel", "unbreakable",
+-- "timeout", ...) or "stuck" when a protected block (chest, computer, ...) is in the way;
+-- detail then names the block and where. Protected blocks are never dug.
 function mine.retreat()
     if type(st.job) == "table" then geom() else ensureJob() end
     local f, r = frame(st.pos)
     if f == 0 and r == 0 then return true end
-    local ok, reason
-    if st.pos.y ~= targetY() then
-        ok, reason = rawLine("y", targetY())
-        if not ok then return false, reason end
-    end
-    f, r = frame(st.pos)
+    local legs = {}
+    if st.pos.y ~= targetY() then legs[#legs + 1] = { "y", targetY() } end
     local m = nearestMain(r)
-    if f ~= 1 and m ~= r and f > 1 then
-        ok, reason = rawLine("r", m)
-        if not ok then return false, reason end
+    if f ~= 1 and m ~= r and f > 1 then legs[#legs + 1] = { "r", m } end
+    legs[#legs + 1] = { "f", 1 }
+    legs[#legs + 1] = { "r", 0 }
+    legs[#legs + 1] = { "f", 0 }
+    for _, leg in ipairs(legs) do
+        local ok, reason, detail = rawLine(leg[1], leg[2])
+        if not ok then
+            if reason == "protected" then return false, "stuck", detail end
+            return false, reason, detail
+        end
     end
-    ok, reason = rawLine("f", 1)
-    if not ok then return false, reason end
-    ok, reason = rawLine("r", 0)
-    if not ok then return false, reason end
-    return rawLine("f", 0)
+    return true
+end
+
+-- Blocks walked by mine.retreat + nav.goTo(home) from `p` (default st.pos): back through the
+-- tunnels to the shaft, then straight up. For the current position while vein mining, the
+-- backtrack along the vein path is added. nil before mine.init or when the position is lost
+-- (callers then fall back to the Manhattan distance). Never less than the Manhattan distance.
+function mine.routeHomeLength(p)
+    if not ready or type(st) ~= "table" or type(st.pos) ~= "table" or type(st.home) ~= "table" then
+        return nil
+    end
+    if st.lost or type(st.job) ~= "table" or type(cfg) ~= "table" then return nil end
+    geom()
+    local extra = 0
+    if not p then
+        p = st.pos
+        if veinFrom and veinPath then extra, p = #veinPath, veinFrom end
+    end
+    local T, h = targetY(), st.home
+    local f, r = frame(p)
+    local n
+    if f == 0 and r == 0 then
+        n = math.abs(p.y - h.y)
+    else
+        n = math.abs(p.y - T)
+        local m = nearestMain(r)
+        if f ~= 1 and m ~= r and f > 1 then
+            n = n + math.abs(r - m)
+            r = m
+        end
+        n = n + math.abs(f - 1) + math.abs(r) + 1 + math.abs(T - h.y)
+    end
+    local manhattan = math.abs(p.x - h.x) + math.abs(p.y - h.y) + math.abs(p.z - h.z)
+    return math.max(n, manhattan) + extra
 end
 
 return mine
