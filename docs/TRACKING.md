@@ -35,10 +35,10 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 
 | WP | Status | Notes |
 |----|--------|-------|
-| AR-0 Protocol + interfaces | TODO | Blocked on: WP-F done, in-game test, 4 open questions in ARMY_PLAN.md |
+| AR-0 Protocol + interfaces | TODO | Questions answered. Blocked on: WP-F done + in-game test |
 | AR-1 Coordinator | TODO | |
 | AR-2 Turtle group mode | TODO | |
-| AR-3 Bridge (turtle relay + relay program) | TODO | |
+| AR-3 Bridge (turtle relay + relay program) | TODO | Auto relay on every turtle, distance-to-server based |
 | AR-4 Underground GPS nodes | TODO | |
 | AR-5 Monitor group view | TODO | |
 | AR-T Simulator multi-turtle | TODO | |
@@ -154,3 +154,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | User install: 'still missing config.lua, state.lua'. Review #2 (require path under wget run) is the likely cause; fixed + README now uses `wget ... install.lua` then `install`. Launching WP-F fix agents X/Y/Z. |
 | 2026-10-31 | coordinator | WP-F X merged (7cd8432): 25/25 green. Residual: no-GPS turn crash in solid face still needs RESET_HOME; GPS covers it. |
 | 2026-10-31 | coordinator | Army scope answered; docs/ARMY_PLAN.md written. 4 open questions. Starts after WP-F + in-game test. |
+| 2026-10-31 | coordinator | Army questions answered: 2nd shaft allowed, server near or far, GPS hardware ready, carry no-GPS turtles to join, auto bridge on all turtles. |

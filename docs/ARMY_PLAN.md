@@ -10,7 +10,7 @@ Starts after the review fixes (WP-F) and your in-game test are done. Progress is
 | Traffic | Reservations in 1-wide tunnels |
 | Unloading | One shared chest station |
 | GPS | Existing surface GPS; share it underground for turtles without ender modems |
-| Bridge | Both: turtles relay, plus fixed relay computers |
+| Bridge | Both: turtles relay **automatically** (no setting needed), plus fixed relay computers |
 | Chunk loading | None; player is nearby |
 | Solo turtles | Keep working; easy to join into a group |
 | Order | After the current fixes and in-game test |
@@ -45,7 +45,7 @@ Starts after the review fixes (WP-F) and your in-game test are done. Progress is
 - With every turtle in GPS range, crash recovery becomes reliable (position from GPS, facing from a one-block probe). This also closes the remaining "facing unknown after crash" gap.
 
 ### 5. Bridge mode (both)
-- **Turtle relay:** turtles with ender modems relay `TMINER` traffic automatically (same dedupe + hop limit the server already uses). Any turtle can be made a relay with `tminer.RELAY=true`.
+- **Turtle relay (automatic, every turtle):** each turtle keeps its hop distance to the server: 0 hops if it heard the server directly in the last 30 s, otherwise 1 + the lowest distance it hears from other turtles (distance is carried in every message). A turtle relays a message only if that moves it closer to where it's going: upward traffic if its distance is lower than the sender's, server traffic if its distance is lower than the recipient's last known distance. Same dedupe + hop limit as the server, plus a small random delay. This keeps 20 turtles from all rebroadcasting everything. Ender-modem turtles naturally end up as the 0-hop gateways. `tminer.RELAY=false` turns it off for a turtle.
 - **Fixed relays:** new small `relay` program (the relay part of `central_monitor`, no UI). `setup.lua relay` installs it. Place one at the shaft bottom; a GPS node computer can run it as well.
 - The monitor shows each turtle's path to the server (direct / via relay N / via turtle N).
 
@@ -74,9 +74,9 @@ Starts after the review fixes (WP-F) and your in-game test are done. Progress is
 
 Simulator scenarios to add: 4 and 20 turtles finish a grid with no collisions; a frozen turtle in the shaft (others wait, nothing reassigned); server restart mid-run; a solo turtle joins a running group; a relay chain of 3; GPS out of range falls back to the journal; full chest at the station.
 
-## Open questions
+## Answers (2026-10-31)
 
-1. **Shaft capacity at 20 turtles:** convoys on one shaft should cope, but if testing shows queues, would you accept a second shaft (one down, one up)?
-2. **Where is the server computer?** If it's near the mine, it unloads with the turtles and that's fine. If it's at a distant base, it keeps running while the turtles are frozen; that works too with the "never reassign" rule, but tell me.
-3. **GPS nodes:** do you have 4 spare computers + wireless modems to put underground, and one ender modem to set them up (or are you OK typing coordinates)?
-4. **Joining without GPS:** OK to carry a no-GPS turtle to the group station when it joins?
+1. **Second shaft:** yes. `GROUP_SHAFTS` = 1 or 2 (one down, one up). The monitor suggests 2 when the average shaft wait goes over a set limit.
+2. **Server location:** usually near the mine, but must work at a distant base too. The "never reassign a silent turtle's claims or segments" rule covers both.
+3. **GPS nodes:** hardware is ready. `gpsnode` still gets written for health reporting and easy setup, and can adopt an existing `gps host` computer (reads its startup coordinates).
+4. **Joining without GPS:** carrying it to the station is fine.
