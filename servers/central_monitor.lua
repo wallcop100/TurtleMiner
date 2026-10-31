@@ -1,4 +1,4 @@
--- Version: 4.0.0
+-- Version: 4.1.0
 -- TurtleMiner central monitor. Speaks TMINER v1 only (docs/PROTOCOL.md).
 --   Server mode (normal computer): relays TMINER traffic between all modems, tracks turtles,
 --     keeps home records, broadcasts `fleet`, sends commands to one turtle at a time.
@@ -33,6 +33,27 @@ local FOCUS_LIST = {
     "all", "diamond", "iron", "gold", "copper", "redstone", "lapis",
     "emerald", "coal", "ancient_debris", "nether_quartz", "nether_gold",
 }
+-- Keys the turtle accepts with SET (miner/config.lua REMOTE_KEYS). The monitor can't
+-- load config.lua, so the list lives here too: {key, short label, type, min, max}.
+local SET_KEYS = {
+    { "TARGET_Y",        "TARGET_Y",    "number", -64, 320 },
+    { "HOME_Y",          "HOME_Y",      "number", -64, 320 },
+    { "BRANCH_LENGTH",   "BRANCH_LEN",  "number", 4, 128 },
+    { "BRANCH_SPACING",  "BRANCH_SPC",  "number", 2, 8 },
+    { "MAIN_LENGTH",     "MAIN_LEN",    "number", 8, 256 },
+    { "MAX_CORRIDORS",   "CORRIDORS",   "number", 1, 64 },
+    { "FOCUS",           "FOCUS",       "string" },
+    { "VEIN_MINING",     "VEIN_MINING", "bool" },
+    { "VEIN_MAX",        "VEIN_MAX",    "number", 1, 512 },
+    { "DROP_TRASH",      "DROP_TRASH",  "bool" },
+    { "FUEL_MARGIN",     "FUEL_MARGIN", "number", 0, 10000 },
+    { "FUEL_KEEP",       "FUEL_KEEP",   "number", 0, 64 },
+    { "FUEL_TARGET",     "FUEL_TARGET", "number", 0, 100000 },
+    { "BURN_COAL",       "BURN_COAL",   "bool" },
+    { "STATUS_INTERVAL", "STATUS_INT",  "number", 2, 120 },
+    { "AUTO_UPDATE",     "AUTO_UPDATE", "bool" },
+}
+M.SET_KEYS = SET_KEYS
 local PHASE_SHORT = {
     BOOT = "BOOT", RECOVER = "RECOVR", TO_WORK = "TOWORK", MINING = "MINING", VEIN = "VEIN",
     RETURNING = "RETURN", UNLOADING = "UNLOAD", REFUELING = "REFUEL", IDLE = "IDLE",
@@ -381,6 +402,13 @@ local function onHomeSave(msg)
     logLine("HOME #" .. msg.from .. " saved " .. tostring(h.x) .. "," .. tostring(h.y) .. "," .. tostring(h.z))
 end
 
+local function onHomeClear(msg)
+    if S.homes[msg.from] == nil then return end
+    S.homes[msg.from] = nil
+    saveHomes()
+    logLine("HOME #" .. msg.from .. " cleared (reinstalled)")
+end
+
 local function onHomeGet(msg)
     local h = S.homes[msg.from]
     if h then
@@ -417,6 +445,7 @@ function M.handleMessage(sender, msg, protocol)
         onAck(msg)
     elseif S.mode == "server" and k == "home_save" then onHomeSave(msg)
     elseif S.mode == "server" and k == "home_get" then onHomeGet(msg)
+    elseif S.mode == "server" and k == "home_clear" then onHomeClear(msg)
     elseif S.mode == "server" and k == "cmd_relay" then onCmdRelay(msg)
     elseif S.mode == "pocket" and k == "fleet" then onFleet(msg)
     else
@@ -762,19 +791,59 @@ local function detailLines(r, wide)
     return L
 end
 
+local function keyDef(key)
+    for _, d in ipairs(SET_KEYS) do if d[1] == key then return d end end
+    return nil
+end
+
+-- Open the value screen for one SET key.
+local function editKey(ui, r, key)
+    local d = keyDef(key)
+    if not d then return end
+    ui.setKey, ui.msg = key, nil
+    if d[3] == "string" then
+        ui.view = "focus"
+    elseif d[3] == "bool" then
+        ui.view = "bool"
+    else
+        local c = key == "TARGET_Y" and type(r.st.cfg) == "table" and r.st.cfg.targetY
+        ui.input = c and tostring(c) or ""
+        ui.view = "num"
+    end
+end
+
+local CONFIRM = {
+    RESET_HOME = { "Reset home?", "YES RESET", function(r)
+        return "Set the home of " .. nameOf(r) .. " to where it is NOW (" .. posStr(r.st.pos)
+            .. ")? Only do this when it sits at its home chest."
+    end },
+    RESET_JOB = { "Reset job?", "YES RESET", function(r)
+        return "Restart the mining grid of " .. nameOf(r) .. " at corridor 0 next time it is home?"
+            .. " Already mined tunnels are walked again. Send RESUME if it is DONE or IDLE."
+    end },
+    REBOOT = { "Reboot?", "YES REBOOT", function(r)
+        return "Reboot " .. nameOf(r) .. "? It saves first and carries on after the restart."
+    end },
+}
+
+local function confirm(ui, cmd)
+    ui.confirmCmd = cmd
+    ui.view = "confirm"
+end
+
 local function cmdDefs(ui, r)
     return {
         { "RETURN HOME", colors.orange, function() doCmd(ui, "RETURN_HOME") end },
         { "PAUSE", colors.yellow, function() doCmd(ui, "PAUSE") end, colors.black },
         { "RESUME", colors.green, function() doCmd(ui, "RESUME") end },
         { "STATUS", colors.blue, function() doCmd(ui, "REQUEST_STATUS") end },
-        { "TARGET Y", colors.blue, function()
-            local c = type(r.st.cfg) == "table" and r.st.cfg.targetY
-            ui.input = c and tostring(c) or ""; ui.msg = nil; ui.view = "num"
-        end },
-        { "FOCUS ORE", colors.blue, function() ui.view = "focus" end },
-        { "RESET HOME", colors.red, function() ui.view = "confirm" end },
+        { "TARGET Y", colors.blue, function() editKey(ui, r, "TARGET_Y") end },
+        { "FOCUS ORE", colors.blue, function() editKey(ui, r, "FOCUS") end },
+        { "SET...", colors.blue, function() ui.view = "keys" end },
         { "UPDATE", colors.purple, function() doCmd(ui, "UPDATE") end },
+        { "RESET JOB", colors.red, function() confirm(ui, "RESET_JOB") end },
+        { "RESET HOME", colors.red, function() confirm(ui, "RESET_HOME") end },
+        { "REBOOT", colors.red, function() confirm(ui, "REBOOT") end },
         { "BACK", colors.gray, function() ui.view = "list" end },
     }
 end
@@ -820,31 +889,75 @@ local function renderCmds(ui)
     buttonGrid(ui, defs, 3)
 end
 
--- Numeric entry (target Y) --------------------------------------------------
+-- Key picker (SET any remote key) -------------------------------------------
+local function renderKeys(ui)
+    local r = currentRec(ui)
+    if not r then ui.view = "list"; return renderList(ui) end
+    header(ui, "Set #" .. r.id, nil, true)
+    local defs = {}
+    for _, d in ipairs(SET_KEYS) do
+        local key = d[1]
+        defs[#defs + 1] = { d[2], colors.blue, function() editKey(ui, r, key) end }
+    end
+    defs[#defs + 1] = { "CANCEL", colors.red, function() ui.view = "detail" end }
+    buttonGrid(ui, defs, 4)
+end
+
+-- Boolean entry ---------------------------------------------------------------
+local function renderBool(ui)
+    local r = currentRec(ui)
+    if not r then ui.view = "list"; return renderList(ui) end
+    local d = keyDef(ui.setKey)
+    if not d or d[3] ~= "bool" then d = keyDef("VEIN_MINING") end
+    header(ui, d[2] .. " #" .. r.id, nil, true)
+    put(ui, 1, 2, trunc("Set " .. d[1] .. " to:", ui.w), colors.lightGray)
+    buttonGrid(ui, {
+        { "TRUE", colors.green, function() doCmd(ui, "SET", { key = d[1], value = true }) end },
+        { "FALSE", colors.orange, function() doCmd(ui, "SET", { key = d[1], value = false }) end },
+        { "CANCEL", colors.red, function() ui.view = "detail" end },
+    }, 3, 1)
+end
+
+-- Numeric entry (any number key) ----------------------------------------------
+local function numKeyDef(ui)
+    local d = keyDef(ui.setKey)
+    if not d or d[3] ~= "number" then d = keyDef("TARGET_Y") end
+    return d
+end
+
 local function numOk(ui)
+    local d = numKeyDef(ui)
     local v = tonumber(ui.input)
-    if not v or v ~= math.floor(v) or v < -64 or v > 320 then
-        ui.msg = "Need integer -64..320"
+    if not v or v ~= math.floor(v) or v < d[4] or v > d[5] then
+        ui.msg = "Need integer " .. d[4] .. ".." .. d[5]
         return
     end
-    doCmd(ui, "SET", { key = "TARGET_Y", value = v })
+    doCmd(ui, "SET", { key = d[1], value = v })
 end
 
 local function numKey(ui, ch)
+    local d = numKeyDef(ui)
+    local maxLen = math.max(#tostring(d[4]), #tostring(d[5]))
     if ch == "DEL" then ui.input = ui.input:sub(1, -2)
     elseif ch == "-" then
-        if ui.input:sub(1, 1) == "-" then ui.input = ui.input:sub(2) else ui.input = "-" .. ui.input end
-    elseif #ui.input < 4 then ui.input = ui.input .. ch end
+        if d[4] < 0 then
+            if ui.input:sub(1, 1) == "-" then ui.input = ui.input:sub(2) else ui.input = "-" .. ui.input end
+        end
+    elseif #ui.input:gsub("^%-", "") < maxLen then ui.input = ui.input .. ch end
     ui.msg = nil
 end
 
 local function renderNum(ui)
     local r = currentRec(ui)
     if not r then ui.view = "list"; return renderList(ui) end
-    header(ui, "Target Y #" .. r.id, nil, true)
-    put(ui, 1, 2, "Y = ", colors.lightGray)
-    put(ui, 5, 2, ui.input .. "_", colors.yellow)
-    if ui.msg then put(ui, 1, 3, trunc(ui.msg, ui.w), colors.red) end
+    local d = numKeyDef(ui)
+    header(ui, d[2] .. " #" .. r.id, nil, true)
+    local lbl = d[2] .. " = "
+    if #lbl > math.floor(ui.w / 2) then lbl = "= " end
+    put(ui, 1, 2, lbl, colors.lightGray)
+    put(ui, #lbl + 1, 2, ui.input .. "_", colors.yellow)
+    if ui.msg then put(ui, 1, 3, trunc(ui.msg, ui.w), colors.red)
+    else put(ui, 1, 3, trunc("range " .. d[4] .. ".." .. d[5], ui.w), colors.gray) end
     local defs = {}
     for _, k in ipairs({ "7", "8", "9", "DEL", "4", "5", "6", "-", "1", "2", "3", "0" }) do
         defs[#defs + 1] = { k, colors.gray, function() numKey(ui, k) end }
@@ -879,7 +992,7 @@ local function renderFocus(ui)
     buttonGrid(ui, defs, 3)
 end
 
--- Confirm RESET_HOME ---------------------------------------------------------
+-- Confirm RESET_HOME / RESET_JOB / REBOOT ------------------------------------
 local function wrap(text, w)
     local out = {}
     if w < 1 then return out end
@@ -898,16 +1011,16 @@ end
 local function renderConfirm(ui)
     local r = currentRec(ui)
     if not r then ui.view = "list"; return renderList(ui) end
-    header(ui, "Reset home?", nil, true)
-    local txt = "Set the home of " .. nameOf(r) .. " to where it is NOW (" .. posStr(r.st.pos)
-        .. ")? Only do this when it sits at its home chest."
-    local lines = wrap(txt, ui.w)
+    local cmd = CONFIRM[ui.confirmCmd] and ui.confirmCmd or "RESET_HOME"
+    local c = CONFIRM[cmd]
+    header(ui, c[1], nil, true)
+    local lines = wrap(c[3](r), ui.w)
     for i, l in ipairs(lines) do
         if 1 + i > ui.h - 2 then break end
         put(ui, 1, 1 + i, l, colors.white)
     end
     local half = math.max(1, math.floor((ui.w - 3) / 2))
-    button(ui, 2, ui.h, half, "YES RESET", colors.red, function() doCmd(ui, "RESET_HOME", {}) end)
+    button(ui, 2, ui.h, half, c[2], colors.red, function() doCmd(ui, cmd, {}) end)
     button(ui, 3 + half, ui.h, half, "NO", colors.gray, function() ui.view = "detail" end)
 end
 
@@ -943,6 +1056,8 @@ function M.render(ui)
     elseif ui.view == "cmds" then renderCmds(ui)
     elseif ui.view == "num" then renderNum(ui)
     elseif ui.view == "focus" then renderFocus(ui)
+    elseif ui.view == "keys" then renderKeys(ui)
+    elseif ui.view == "bool" then renderBool(ui)
     elseif ui.view == "confirm" then renderConfirm(ui)
     elseif ui.view == "text" then
         renderText(ui, "Detail", wrap(ui.text or "", w), function() ui.view = "detail" end)

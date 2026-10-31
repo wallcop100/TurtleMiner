@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- TurtleMiner turtle startup. Checks for updates only when the turtle is at
 -- home (or has no state yet), reboots at most once after an update, then
 -- starts the miner. Nothing here ever waits for input.
@@ -22,25 +22,32 @@ end
 
 -- true when it is safe to update: no state at all, or the last known
 -- position is home and no move was in flight.
+--   R lines (refuels) say nothing about position: skipped.
+--   D lines carry the position after a move: the last one wins.
+--   S lines mark a snapshot (older ones are kept as history): their position,
+--   unless D lines follow.
+--   Last record an I line: a move may be half done, so not at home.
 local function atHome()
     local text = readFile(".tm_state") or readFile(".tm_state.tmp")
     if not text then return true end
     local st = textutils.unserialize(text)
     if type(st) ~= "table" then return false end
     local pos = st.pos
-    -- The journal records moves since the snapshot; the last line wins.
     local j = readFile(".tm_journal")
     if j then
-        local last
-        for line in j:gmatch("[^\n]+") do last = line end
-        if last then
-            local tag = last:match("^(%a)")
-            if tag == "I" then return false end
-            if tag == "D" then
-                local x, y, z = last:match("^D%s+(%-?%d+)%s+(%-?%d+)%s+(%-?%d+)")
-                if x then pos = { x = tonumber(x), y = tonumber(y), z = tonumber(z) } end
+        local lastTag
+        for line in j:gmatch("[^\n]+") do
+            local tag = line:match("^(%a)")
+            if tag == "D" or tag == "S" then
+                local x, y, z = line:match("^%a%s+(%-?%d+)%s+(%-?%d+)%s+(%-?%d+)")
+                if x then pos = { x = tonumber(x), y = tonumber(y), z = tonumber(z) }
+                elseif tag == "S" then pos = st.pos end
+                lastTag = tag
+            elseif tag == "I" then
+                lastTag = tag
             end
         end
+        if lastTag == "I" then return false end
     end
     return samePos(pos, st.home)
 end

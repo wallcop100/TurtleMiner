@@ -1,10 +1,27 @@
--- Version: 1.1.2
+-- Version: 1.2.0
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
 -- Never prompts. Problems end in NEEDS_HELP with a reason, never in read().
 
-local VERSION = "1.0.0"
+-- The version is the first line of this file, so it can never go stale.
+local function readVersion()
+    local ok, v = pcall(function()
+        for _, name in ipairs({ "miner.lua", "miner" }) do
+            if fs.exists(name) then
+                local h = fs.open(name, "r")
+                if h then
+                    local line = h.readLine()
+                    h.close()
+                    local ver = line and string.match(line, "^%-%-%s*Version:%s*([%w%.%-]+)")
+                    if ver then return ver end
+                end
+            end
+        end
+    end)
+    return ok and v or nil
+end
+local VERSION = readVersion() or "?"
 
 local config = require("config")
 local state  = require("state")
@@ -21,6 +38,9 @@ local ctl = {}
 local WORK = { TO_WORK = true, MINING = true, VEIN = true }
 local UNSET_Y = -9999
 local NEED_HOME_Y = "no GPS: set HOME_Y to this turtle's Y level (SET HOME_Y), then RESUME"
+local LOST_FAR    = "state lost: send RESET_HOME here or carry to home"
+local STUCK_RETRIES = 5        -- automatic retries after a "stuck" NEEDS_HELP
+local NEAR_HOME   = 3          -- blocks: GPS position close enough to adopt a server home record
 
 -- Runtime control requests (set by commands, consumed by the worker).
 local req = { ret = false, pause = false, resume = false, homeReset = false }
@@ -30,6 +50,7 @@ local homeScanned    = false
 -- Fuel at program start; consumed by the first REFUELING that is still at the boot home.
 local bootFuel       = turtle.getFuelLevel()
 local homeOverhead   = 0      -- fuel spent at home after boot (facing calibration) before leaving
+local noRetreat      = false  -- next goHome skips mine.retreat (home adopted from the server, no tunnels known)
 
 -- Helpers --------------------------------------------------------------------
 
@@ -48,6 +69,14 @@ local function samePos(a, b)
 end
 
 local function atHome() return st ~= nil and samePos(st.pos, st.home) end
+
+-- GPS position p close enough to home record h to walk there safely: in its column
+-- (shaft) or within NEAR_HOME blocks on every axis.
+local function nearHome(p, h)
+    local dx, dy, dz = math.abs(p.x - h.x), math.abs(p.y - h.y), math.abs(p.z - h.z)
+    if dx == 0 and dz == 0 then return true end
+    return dx <= NEAR_HOME and dz <= NEAR_HOME and dy <= NEAR_HOME
+end
 
 local function freshJob() return { corridor = 0, branch = 0, side = "L", step = 0 } end
 
@@ -164,6 +193,10 @@ local function validateCmd(cmd, params)
         if not check then return false, "unknown or read-only key: " .. tostring(key) end
         params.value = coerce(key, params.value)
         if not check(params.value) then return false, "invalid value for " .. key end
+        if key == "HOME_Y" and st and not st.gps and not atHome() then
+            -- The relative frame and journal history would no longer agree.
+            return false, "HOME_Y can only be set while the turtle is at home"
+        end
     end
     return true
 end
@@ -194,6 +227,7 @@ local function doResetHome(params)
     st.lost = nil
     st.facingUnknown = nil
     helpRetry = nil
+    noRetreat = false
     req.homeReset = true
     save()
     sendHomeSave()
@@ -215,12 +249,15 @@ local function applyCmd(c)
         local ok, err = config.set(key, value)
         if ok then
             cfg[key] = value
-            if key == "HOME_Y" and st and not st.gps then
-                -- Relative frame: move the whole frame so home sits at the real Y.
+            if key == "HOME_Y" and st and not st.gps and atHome() then
+                -- Relative frame: move the whole frame so home sits at the real Y. Only at
+                -- home (validateCmd refuses otherwise); the journal history is in the old
+                -- frame, so drop it and start from a fresh snapshot.
                 local dy = value - st.home.y
                 st.home.y = st.home.y + dy
                 st.pos.y = st.pos.y + dy
                 if st.lost == NEED_HOME_Y then st.lost = nil end
+                pcall(state.wipe)
                 save()
                 sendHomeSave()
             end
@@ -239,7 +276,7 @@ local function applyCmd(c)
     elseif name == "UPDATE" then
         st.flags.update = true
         save()
-        net.event("info", "update queued (runs when idle at home)")
+        net.event("info", "update queued (runs next time at home, then carries on)")
     elseif name == "REBOOT" then
         -- Commands are only applied between steps, so the turtle is not moving.
         save()
@@ -320,14 +357,16 @@ local function goHome()
     if not atHome() then
         -- Walk back through our own tunnels to the shaft first; a straight goTo
         -- at mining depth would cut new tunnels through rock.
-        if not st.lost then pcall(mine.retreat) end
+        if not st.lost and not noRetreat then pcall(mine.retreat) end
         local ok, reason = nav.goTo(st.home)
         if not ok and reason == "no_fuel" then
-            inv.refuel(inv.fuelNeeded(st))
+            -- Stranded: burn anything, including the FUEL_KEEP reserve (older inv ignores opts).
+            pcall(inv.refuel, inv.fuelNeeded(st), { emergency = true })
             ok, reason = nav.goTo(st.home)
         end
         if not ok then return false, reason end
     end
+    noRetreat = false
     nav.face(st.homeFacing)
     return true
 end
@@ -352,7 +391,9 @@ local function measureHomeOverhead()
     bootFuel = nil
 end
 
-local function runUpdate()
+-- Runs the updater. If something was installed, saves `after` as the phase to come
+-- back to and reboots (startup -> miner -> resumePhase); otherwise just returns.
+local function runUpdate(after, afterReason)
     st.flags.update = false
     save()
     net.event("info", "running updater")
@@ -367,8 +408,11 @@ local function runUpdate()
     end
     if updated then
         net.event("info", "updated, rebooting")
+        st.phase, st.reason = after or st.phase, afterReason
         save()
         os.reboot()
+    else
+        net.event("info", "no update installed; carrying on")
     end
 end
 
@@ -383,14 +427,14 @@ local function nextAfterHome()
         st.flags.afterHome = nil
         return "DONE", "all corridors mined"
     end
-    if st.flags.update then return "IDLE", "update pending" end
     if req.pause then req.pause = false; return "PAUSED", "paused by command" end
     return "TO_WORK"
 end
 
 -- Where to continue after a reboot or a RESUME.
 local function resumePhase(p)
-    if p == "IDLE" or p == "DONE" or p == "PAUSED" then
+    if p == "PAUSED" then return "PAUSED" end   -- stays where it is until RESUME
+    if p == "IDLE" or p == "DONE" then
         return atHome() and p or "RETURNING"
     end
     if WORK[p] then return "TO_WORK" end
@@ -439,6 +483,11 @@ H.REFUELING = function()
         net.event("info", "job reset to corridor 0")
     end
     local nxt, why = nextAfterHome()
+    if st.flags.update then
+        -- After an update reboot, come back to what we were about to do.
+        -- REFUELING (not TO_WORK) so the fuel check still runs after the reboot.
+        runUpdate(nxt == "TO_WORK" and "REFUELING" or nxt, nxt ~= "TO_WORK" and why or nil)
+    end
     if fuelLevel() == math.huge then return nxt, why end
     measureHomeOverhead()
     -- One calculation for the check and the report: `need` is what a fresh boot must start with.
@@ -481,6 +530,7 @@ local function work()
         helpRetry = function() return "UNLOADING" end
         return "NEEDS_HELP", result == "full" and "inventory full at home" or "not enough fuel at home"
     end
+    if result == "full" or result == "fuel" or result == "done" then st.flags.stuckRetries = nil end
     if result == "full" then return "RETURNING", "inventory full" end
     if result == "fuel" then return "RETURNING", "low fuel" end
     if result == "done" then st.flags.afterHome = "DONE"; return "RETURNING", "job done" end
@@ -490,13 +540,29 @@ local function work()
     setPhase("RETURNING", why)
     local ok = goHome()
     helpRetry = nil
-    return "NEEDS_HELP", why .. (ok and " (at home)" or " (could not get home)")
+    local where = ok and " (at home)" or " (could not get home)"
+    local n = tonumber(st.flags.stuckRetries) or 0
+    if string.find(why, "unbreakable", 1, true) then
+        return "NEEDS_HELP", why .. where   -- bedrock won't go away by waiting
+    end
+    if n >= STUCK_RETRIES then
+        return "NEEDS_HELP", why .. where .. "; gave up after " .. n .. " retries"
+    end
+    -- Mobs, players, other turtles move on: try again later, a limited number of times.
+    st.flags.stuckRetries = n + 1
+    local wait = (cfg.HELP_RETRY or 30) * 4
+    local at = os.clock() + wait
+    helpRetry = function()
+        if os.clock() < at then return nil end
+        return atHome() and "UNLOADING" or "RETURNING", "retry " .. (n + 1) .. "/" .. STUCK_RETRIES .. " after " .. why
+    end
+    return "NEEDS_HELP", why .. where .. "; retry " .. (n + 1) .. "/" .. STUCK_RETRIES .. " in " .. wait .. "s"
 end
 H.TO_WORK, H.MINING, H.VEIN = work, work, work
 
 local function idleLike(onResume)
     local isDone = st.phase == "DONE"
-    if atHome() and st.flags.update then runUpdate() end
+    if atHome() and st.flags.update then runUpdate(st.phase, st.reason) end
     waitFor(cfg.HELP_RETRY or 30, function() return atHome() and st.flags.update end)
     if req.homeReset then req.homeReset = false; return "IDLE", "home reset" end
     if req.resume then
@@ -517,7 +583,12 @@ end
 H.DONE = function()
     return idleLike(function()
         if st.flags.resetJob then return "UNLOADING" end
-        net.event("info", "job complete; send RESET_JOB then RESUME to start again")
+        local corr = type(st.job) == "table" and tonumber(st.job.corridor) or 0
+        if corr < (cfg.MAX_CORRIDORS or 1) then
+            -- MAX_CORRIDORS was raised: carry on with the next corridor.
+            return atHome() and "UNLOADING" or "TO_WORK"
+        end
+        net.event("info", "job complete; raise MAX_CORRIDORS or send RESET_JOB, then RESUME")
         return nil
     end)
 end
@@ -537,6 +608,7 @@ H.NEEDS_HELP = function()
             return nil
         end
         helpRetry = nil
+        st.flags.stuckRetries = nil      -- a person looked at it: fresh retry budget
         return atHome() and "UNLOADING" or "TO_WORK"
     end
     if req.ret then
@@ -549,8 +621,11 @@ H.NEEDS_HELP = function()
         end
     end
     if helpRetry then
-        local nxt, why = helpRetry()
-        if nxt then helpRetry = nil; return nxt, why end
+        local fn = helpRetry
+        local nxt, why = fn()
+        -- fn may have installed a new helpRetry (e.g. a failed facing calibration): keep that one.
+        if nxt and helpRetry == fn then helpRetry = nil end
+        if nxt then return nxt, why end
     end
     return nil
 end
@@ -619,14 +694,42 @@ local function boot()
         st.gps = true
         st.pos = copyPos(p)
         if found and rec.gps then
-            -- State file lost but the server knows our world home: we may be mid-job.
-            st.home = copyPos(rec.home)
-            st.homeFacing = math.floor(tonumber(rec.homeFacing) or 0) % 4
-            local ok, why = calibrateOrHelp()
+            -- State file lost but the server knows our world home. Only trust it when we are
+            -- next to it (or in its shaft): walking a long way back would dig through anything
+            -- in between, and the turtle may simply have been set up somewhere new.
+            local h = copyPos(rec.home)
+            local hf = math.floor(tonumber(rec.homeFacing) or 0) % 4
+            if nearHome(p, h) then
+                st.home, st.homeFacing = h, hf
+                local ok, why = calibrateOrHelp()
+                sendHello()
+                if not ok then return "NEEDS_HELP", why end
+                noRetreat = true
+                net.event("warn", "state lost; home restored from server, job restarts at corridor 0")
+                return atHome() and "UNLOADING" or "RETURNING"
+            end
+            -- Learn our facing (one block out and back) so RESET_HOME here gets it right.
+            local okp, okc = pcall(nav.calibrateFacing)
+            okc = okp and okc
+            st.facingUnknown = nil
+            st.home, st.homeFacing = h, st.facing
+            st.lost = LOST_FAR
             sendHello()
-            if not ok then return "NEEDS_HELP", why end
-            net.event("warn", "state lost; home restored from server, job restarts at corridor 0")
-            return atHome() and "UNLOADING" or "RETURNING"
+            helpRetry = function()
+                -- Carried home by hand? Then adopt the record after all.
+                local q = nav.gpsLocate()
+                if not (q and nearHome(q, h)) then return nil end
+                st.pos, st.home, st.homeFacing = copyPos(q), h, hf
+                st.lost = nil
+                local ok, why = calibrateOrHelp()
+                if not ok then return "NEEDS_HELP", why end
+                noRetreat = true
+                net.event("info", "back at the recorded home; job restarts at corridor 0")
+                return atHome() and "UNLOADING" or "RETURNING"
+            end
+            net.event("warn", "state lost " .. nav.dist(p, h) .. " blocks from home record "
+                .. h.x .. "," .. h.y .. "," .. h.z .. "; not walking there")
+            return "NEEDS_HELP", LOST_FAR .. (okc and "" or " (facing not calibrated)")
         end
         st.home = copyPos(p)
         local ok, why = calibrateOrHelp()

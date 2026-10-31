@@ -57,6 +57,8 @@ Dedupe key: `from .. ":" .. boot .. ":" .. seq`. Receivers keep the last 256 key
 
 **`home_get`**: no fields. Asks the server for this turtle's home record.
 
+**`home_clear`**: no fields. Sent by `install` when the turtle is set up with no local state: every server deletes its home record for `from` (the miner sends a fresh `home_save` on its first start).
+
 ### Server → turtle
 
 **`cmd`**: `id` (string, unique per command), `cmd` (string), `params` (table)
@@ -65,12 +67,12 @@ Dedupe key: `from .. ":" .. boot .. ":" .. seq`. Receivers keep the last 256 key
 |-----|--------|------------------|
 | `RETURN_HOME` | | Stop the job step, go home, unload, then `IDLE` |
 | `PAUSE` | | Stop where it is (`PAUSED`), keep reporting |
-| `RESUME` | | From `PAUSED`/`IDLE`/`NEEDS_HELP`: continue the job |
-| `SET` | `key, value` | Change a config key (see config.lua `REMOTE_KEYS`), persist it |
+| `RESUME` | | From `PAUSED`/`IDLE`/`NEEDS_HELP`: continue the job. From `DONE`: continue if `MAX_CORRIDORS` was raised or `RESET_JOB` was sent |
+| `SET` | `key, value` | Change a config key (see config.lua `REMOTE_KEYS`), persist it. `HOME_Y` on a no-GPS turtle is refused unless it is at home |
 | `REQUEST_STATUS` | | Send `status` now |
 | `RESET_JOB` | | Next time at home, restart the grid at corridor 0 |
 | `RESET_HOME` | | "You are at home now": set home = current pos, facing as given in `params.facing` (or current) |
-| `UPDATE` | | Run updater when next `IDLE` at home |
+| `UPDATE` | | Run updater next time at home (at once if `IDLE`/`DONE` there), then carry on with what it was doing (after the reboot too, if files were installed) |
 | `REBOOT` | | Save and `os.reboot()`, only when not moving |
 
 **`home`**: `found (bool), home, homeFacing, gps`. Reply to `home_get`.

@@ -16,10 +16,16 @@ Parts:
 
 - **Turtle** (advanced is nicer, not required) with a **pickaxe** equipped and a **wireless or ender modem** on the other side. Without a modem it still mines, but nothing can see or command it.
 - **At home**: a chest **behind or beside** the turtle (not below: the shaft goes straight down from the home spot) for loot. Optional second chest with coal/charcoal as a **fuel chest** (detected automatically: an inventory that is mostly fuel). Works without a fuel chest, or with unlimited fuel.
-- **Optional GPS** (4 GPS hosts). With GPS the turtle uses world coordinates and re-checks its position; without GPS it counts moves from home. Each turtle decides at boot.
+- **Not on the modem side**: the turtle can't see a chest on the side where its modem is equipped (the modem takes that side). Put chests behind, on top, or on the pickaxe side.
+- **Optional GPS** (4 GPS hosts). With GPS the turtle uses world coordinates and re-checks its position; without GPS it counts moves from home. Each turtle decides at boot. On its first start a GPS turtle works out which way it faces by stepping one block and back: leave a free block **in front of or behind** the home spot, or **above** it (with a free block in front of that one).
 - **Server computer** with a wireless/ender modem. If turtles are far away, use ender modems, or several modems on the server (it relays `TMINER` messages between them).
 
-Keep the home and mining area chunk-loaded if you can. If not, the turtle resumes when the chunk loads again.
+### Space and chunks
+
+- The grid is big. From the home spot the shaft goes down to `TARGET_Y`, then the spine runs to the **right** of the home facing for `MAX_CORRIDORS * (2*BRANCH_LENGTH + BRANCH_SPACING)` blocks (536 with the defaults), and each corridor's main tunnel runs `MAIN_LENGTH` (64) forward. Branches reach `BRANCH_LENGTH` (32) to each side of a main.
+- Keep the home and the mining area **chunk-loaded** (chunk loader, or a player nearby) if you can. With the defaults that is far more than the chunks around one player. If a chunk unloads, the turtle stops and resumes where it was when the chunk loads again; lower `MAX_CORRIDORS`/`BRANCH_LENGTH` to keep the area small.
+- **Several turtles**: their grids must not overlap. Space the homes further apart than the grid size above, or face them in different directions (the grid goes forward and to the right of each home).
+- The turtle **attacks anything standing in its way** (mobs, and players too). Don't stand in its tunnels. Something that never moves makes it give up after `STUCK_TIMEOUT` and retry later (see `NEEDS_HELP`).
 
 ## Install
 
@@ -69,7 +75,7 @@ wget BASE/miner/install.lua install.lua
 install
 ```
 
-The installer checks modem, pickaxe and fuel, fetches all miner files from the update server, asks four or five questions (Y level too when there is no GPS) (name, mining Y, ore focus, number of corridors), writes the settings and `startup.lua`. `install --default` skips the questions. Then reboot, or run `miner`.
+The installer checks modem, pickaxe and fuel, fetches all miner files from the update server and asks four questions: name, mining Y, ore focus, number of corridors (five without GPS: it also asks the home Y level). If the turtle has old miner state it also asks whether this is a new home spot (answer yes when you moved it). With no state left it tells the servers to forget the turtle's old home, so the spot it starts on becomes home. Then it writes the settings and `startup.lua`; `install --default` skips the questions (and keeps old state). Finally reboot, or run `miner`.
 
 No update server? Copy the `miner/*.lua` files onto the turtle by hand (disk or `wget`), then run `install`.
 
@@ -95,14 +101,30 @@ central_monitor
 
 It detects that it is a pocket computer and shows the fleet the server sends every 5 s. Commands go through the server.
 
+### Using the monitor
+
+Touch a turtle (or click it on the pocket screen) to see its details and commands:
+
+| Button | Does |
+|--------|------|
+| RETURN HOME | Go home, unload, wait `IDLE` |
+| PAUSE / RESUME | Stop where it is / carry on (also leaves `IDLE`, `NEEDS_HELP`, and `DONE` after a raise or reset) |
+| STATUS | Ask for a status now |
+| TARGET Y, FOCUS ORE | Shortcuts for the two most used settings |
+| SET... | Pick any remote key (table below), then enter a number on the keypad, choose TRUE/FALSE, or pick the ore |
+| UPDATE | Update next time it is home, then carry on |
+| RESET JOB | (asks first) Restart the grid at corridor 0 next time it is home |
+| RESET HOME | (asks first) "It is at its home now": use the current spot as home |
+| REBOOT | (asks first) Save and restart the turtle |
+
 ## Configuration
 
-Settings live in the turtle's settings file under `tminer.<KEY>`. Change them with `install`, `set tminer.<KEY> <value>` on the turtle, or the monitor's SET command (keys marked **remote**). Restart the miner after a local `set`.
+Settings live in the turtle's settings file under `tminer.<KEY>`. Change them with `install`, `set tminer.<KEY> <value>` on the turtle, or the monitor's SET... button (keys marked **remote**; the turtle applies them at once and acks or refuses). Restart the miner after a local `set`.
 
 | Key | Default | Remote | Meaning |
 |-----|---------|--------|---------|
 | `TARGET_Y` | -58 | yes | Mining level (world Y) |
-| `HOME_Y` | -9999 (unset) | yes | World Y of the home spot. Only needed without GPS; `install` asks for it |
+| `HOME_Y` | -9999 (unset) | yes | World Y of the home spot. Only needed without GPS; `install` asks for it. A no-GPS turtle accepts it only while at home |
 | `BRANCH_LENGTH` | 32 | yes | Branch length, each side |
 | `BRANCH_SPACING` | 3 | yes | Distance between branches (3 = full coverage) |
 | `MAIN_LENGTH` | 64 | yes | Length of each corridor's main tunnel |
@@ -120,8 +142,10 @@ Settings live in the turtle's settings file under `tminer.<KEY>`. Change them wi
 | `STATUS_INTERVAL` | 10 | yes | Seconds between status messages |
 | `SNAPSHOT_EVERY` | 100 | no | Moves between full state snapshots |
 | `STUCK_TIMEOUT` | 60 | no | Seconds without progress before a move gives up |
-| `HELP_RETRY` | 30 | no | Seconds between automatic retries while `NEEDS_HELP` |
+| `HELP_RETRY` | 30 | no | Seconds between automatic retries while `NEEDS_HELP` ("stuck" retries wait 4x this) |
 | `AUTO_UPDATE` | true | yes | Check for updates at boot when at home |
+
+Grid settings (`BRANCH_LENGTH`, `BRANCH_SPACING`, `MAIN_LENGTH`) are frozen into the job when it starts; new values apply after `RESET_JOB`. `MAX_CORRIDORS`, `TARGET_Y` and `FOCUS` apply at once.
 
 ## Phases
 
@@ -132,9 +156,9 @@ Settings live in the turtle's settings file under `tminer.<KEY>`. Change them wi
 | `MINING`, `VEIN` | Digging a branch / following an ore vein |
 | `RETURNING` | Going home (inventory full, fuel low, or told to) |
 | `UNLOADING`, `REFUELING` | At home, emptying into the chest / topping up fuel |
-| `IDLE` | At home, waiting (after `RETURN_HOME`) |
-| `PAUSED` | Stopped where it is by `PAUSE`; send `RESUME` |
-| `DONE` | Mined `MAX_CORRIDORS` corridors. Raise it, or send `RESET_JOB` |
+| `IDLE` | At home, waiting (after `RETURN_HOME`); send `RESUME` |
+| `PAUSED` | Stopped where it is by `PAUSE`; stays paused in place across reboots and chunk reloads; send `RESUME` |
+| `DONE` | Mined `MAX_CORRIDORS` corridors. Raise `MAX_CORRIDORS` (SET) and send `RESUME` to mine more, or send `RESET_JOB` then `RESUME` to start the grid over |
 | `ERROR` | The program crashed; it saves, tries to go home, then `NEEDS_HELP` |
 | `NEEDS_HELP` | It can't continue on its own. The reason says why (below) |
 
@@ -144,20 +168,23 @@ Settings live in the turtle's settings file under `tminer.<KEY>`. Change them wi
 |--------|-----------|
 | chest full / `storage_full` | Empty the home chest. It retries every 30 s by itself |
 | no storage / `no_storage` | Put a chest behind or beside the home spot |
-| no GPS: set HOME_Y | Turtle has no GPS and doesn't know its Y. Send `SET HOME_Y <y>` then `RESUME` (or rerun `install`) |
-| unbreakable block at x,y,z | Bedrock or a protected block in the way. Change `TARGET_Y` or send `RESET_JOB`, then `RESUME` |
-| no fuel / `no_fuel` | Bring fuel to the turtle (or to its chest at home), then `RESUME` |
-| timeout | Something kept blocking it for 60 s (mob farm, other turtle). Clear it, `RESUME` |
+| no GPS: set HOME_Y | Turtle has no GPS and doesn't know its Y. Send `SET HOME_Y <y>` then `RESUME` (or rerun `install`). `SET HOME_Y` is refused unless the turtle is at home |
+| stuck: unbreakable at x,y,z | Bedrock or a protected block in the way. Change `TARGET_Y` or send `RESET_JOB`, then `RESUME` |
+| no fuel / `no_fuel` | Bring fuel to the turtle (or to its chest at home), then `RESUME`. When stranded on the way home it also burns its `FUEL_KEEP` reserve |
+| stuck: timeout ... retry n/5 | Something kept blocking it for 60 s (mob, player, other turtle). It goes back to work by itself every 2 minutes, 5 times; after that ("gave up") clear the way and `RESUME` |
 | facing unknown after crash | Crashed mid-turn without GPS. Carry it home, face it the setup way, send `RESET_HOME` |
-| position unknown after crash / state lost | Same: put it at home and send `RESET_HOME` |
+| position unknown after crash | Same: put it at home and send `RESET_HOME` |
+| state lost: send RESET_HOME here or carry to home | GPS turtle lost its state files and is far from the home the server remembers. If this spot is its new home, send `RESET_HOME`. If not, carry it to its old home: it notices and carries on |
+| state lost: place at home and send RESET_HOME | Same without GPS: put it at home, send `RESET_HOME` |
 | ERROR text | A bug. The card shows the first 200 characters of the traceback; report it |
 
 ## Troubleshooting
 
 - **Turtle not on the monitor**: does it have a modem (`peripheral.find("modem")`)? Is it in range, or is an ender modem needed? A turtle silent for 60 s shows as `SILENT`.
 - **Commands go to the wrong turtle**: they can't; commands carry the turtle's ID. Check the label/ID on the card.
-- **Turtle won't update**: updates only run at boot while the turtle is at home (or via `UPDATE` when idle at home). Run `updater --check` on the turtle to see what the server offers. The server needs the higher version number on the first line.
+- **Turtle won't update**: updates only run at boot while the turtle is at home, or after `UPDATE` the next time it is home (then it carries on with what it was doing). Run `updater --check` on the turtle to see what the server offers. The server needs the higher version number on the first line.
 - **A broken file on the server**: the turtle checks every file with `load()` before installing and keeps the old one if any file fails. The previous version stays as `<name>.bak`.
 - **Boot loop after an update**: can't happen by design: the turtle reboots at most once per update (`.tm_updated` marks it). Disable auto-updates with `set tminer.AUTO_UPDATE false`.
-- **Moved the turtle by hand / lost state**: put it on its home spot and send `RESET_HOME`, or delete `.tm_state*` and `.tm_journal` on the turtle and reboot (it then treats where it is as home).
-- **Start over**: `RESET_JOB` from the monitor restarts the grid at corridor 0 next time the turtle is home.
+- **Moved the turtle by hand / lost state**: put it on its home spot and send `RESET_HOME`. To set it up somewhere new, run `install` there and answer yes to "new home spot" (it deletes `.tm_state*` and `.tm_journal*` and makes the servers forget the old home). By hand: delete those files, delete the turtle's entry from `miner_homes.db` on every monitor server (or run `install`), and reboot.
+- **Start over**: `RESET JOB` on the monitor restarts the grid at corridor 0 next time the turtle is home; `RESUME` if it is `DONE` or `IDLE`.
+- **Paused turtle after a server restart**: it stays `PAUSED` where it was. Send `RESUME`, or `RETURN_HOME`.

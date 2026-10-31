@@ -46,13 +46,13 @@ A miner that:
 | `miner/mine.lua` | WP-B | Branch pattern, vein mining, corridor counter |
 | `miner/net.lua` | WP-C | Single rednet wrapper, message schema, command inbox |
 | `miner/miner.lua` | WP-C | Main: boot, state machine, coroutines |
-| `miner/startup.lua` | WP-E | `shell.run("miner")`, nothing else |
+| `miner/startup.lua` | WP-E | `require("updater").run` when at home (journal check), then `shell.run("miner")` |
 | `miner/install.lua` | WP-E | One-shot installer + first-time config |
 | `miner/updater.lua` | WP-E | Replaces `turtle_updater.lua`; only runs at boot or when idle at home |
 
 ### 3.2 Persistence (WP-A)
 
-- One file `.miner_state`. Write to `.miner_state.tmp`, then `fs.delete` + `fs.move`. On load, if main is missing/corrupt but `.tmp` is valid, use `.tmp`.
+- Snapshot file `.tm_state` (plus the per-move journal `.tm_journal`, see INTERFACES.md). Write to `.tm_state.tmp`, then `fs.delete` + `fs.move`. On load, if main is missing/corrupt but `.tmp` is valid, use `.tmp`.
 - State holds: `pos`, `facing`, `home`, `homeFacing`, `phase`, `corridor`, `branch`, `branchStep`, `pending`, `settings`, `stats`.
 - **Journal before move:** before calling `turtle.forward/up/down/back/turn*`, save `pending = {op, from=pos, fromFacing}`. After success, apply and clear `pending` in the same save. On boot, if `pending` is set, resolve it:
   - GPS available → use GPS position (and a GPS probe for facing).
@@ -126,7 +126,7 @@ Single protocol `TMINER`. Every message: `{v=1, kind=..., from=id, to=id|"all"|"
 ### 3.9 Install / update (WP-E)
 
 - `install.lua` on a fresh turtle: checks modem/pickaxe/fuel, asks 4 questions once (label, target Y, storage side, ore focus), writes `miner.cfg` + `startup.lua`. Can also be fed via `install --default`.
-- Updater: run at boot only (and on `UPDATE` cmd when idle at home). Validates each file with `load` before swapping. One reboot max. Never rewrites `startup.lua` unless it's missing.
+- Updater: run at boot only (and on `UPDATE` cmd, next time at home; the turtle then carries on with what it was doing). Validates each file with `load` before swapping. One reboot max. Never rewrites `startup.lua` unless it's missing.
 - Update server: one manifest of files with versions; moved to `servers/update_server/`.
 - Cleanup: delete `old/`, `miner/260216/`, the old `miner/*.lua` modules, and `servers/update sever/`. `farmer/` untouched.
 

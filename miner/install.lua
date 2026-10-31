@@ -1,7 +1,8 @@
--- Version: 1.1.1
+-- Version: 1.2.0
 -- TurtleMiner installer. The only program that asks questions.
 --
---   install              check hardware, fetch missing files, ask 4 questions
+--   install              check hardware, fetch missing files, ask 4-5 questions
+--                        (plus one if old miner state is found)
 --   install --default    same, but no questions (keeps current values / defaults)
 --
 -- A fresh turtle only needs this file: missing miner files are fetched from the
@@ -116,6 +117,26 @@ local function fetchUpdater()
     end
     for _, n in ipairs(opened) do pcall(rednet.close, n) end
     return result, reason
+end
+
+-- One TMINER message to the servers (fire and forget). Returns true if a modem was open.
+local function sendToServers(kind, body)
+    local opened = {}
+    for _, n in ipairs(peripheral.getNames()) do
+        if peripheral.getType(n) == "modem" and not rednet.isOpen(n) then
+            pcall(rednet.open, n)
+            if rednet.isOpen(n) then opened[#opened + 1] = n end
+        end
+    end
+    local any = rednet.isOpen()
+    if any then
+        local t = os.epoch("utc")
+        body.v, body.kind, body.from, body.to = 1, kind, os.getComputerID(), "server"
+        body.boot, body.seq, body.ts, body.hops = t, math.random(1, 99999), t, 0
+        pcall(rednet.broadcast, body, "TMINER")
+    end
+    for _, n in ipairs(opened) do pcall(rednet.close, n) end
+    return any
 end
 
 -- ------------------------------------------------------------ checks
@@ -278,6 +299,29 @@ end
 local maxCorr = askNumber("MAX_CORRIDORS", "Corridors to mine before stopping")
 
 ok(("label %s, Y %d, focus %s, %d corridors"):format(label, targetY, focus, maxCorr))
+
+-- ------------------------------------------------------------ home record
+
+-- The miner keeps its position in .tm_state/.tm_journal and the servers keep a
+-- backup of its home. Setting up at a new spot must forget both, or the miner
+-- would think it is still at (or must walk back to) the old home.
+local STATE_FILES = { ".tm_state", ".tm_state.tmp", ".tm_journal", ".tm_journal.tmp" }
+local hasState = false
+for _, f in ipairs(STATE_FILES) do if fs.exists(f) then hasState = true end end
+if hasState and yes("Old miner state found. Is this a NEW home spot (forget old position and job)?", false) then
+    for _, f in ipairs(STATE_FILES) do if fs.exists(f) then fs.delete(f) end end
+    hasState = false
+    ok("old state deleted: this spot becomes home on the next start")
+end
+if not hasState then
+    -- No local state: the next start sets home here. Drop the servers' old record so
+    -- a later state loss can't send the turtle back to a previous home.
+    if modem and sendToServers("home_clear", {}) then
+        ok("asked the servers to forget this turtle's old home")
+    end
+else
+    ok("keeping the saved position and job")
+end
 
 -- ------------------------------------------------------------ startup
 

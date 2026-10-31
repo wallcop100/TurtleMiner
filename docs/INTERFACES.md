@@ -167,13 +167,20 @@ net.request(kind, body, replyKind, timeout) -> msg|nil   -- for home_get / updat
 - Worker = only coroutine that moves the turtle. State machine over `st.phase`. Whole worker in `xpcall(..., debug.traceback)`; on error: `st.lastError`, `phase = "ERROR"`, save, status, try `goTo(home)` once, then `NEEDS_HELP`, then wait for `RESUME` (loop, sleeping, still serving `ctl.check`).
 - `ctl.check()` drains `net.poll()`, applies commands (PROTOCOL.md table), returns `"return"`/`"stop"`/nil; while `PAUSED` it blocks in a sleep loop.
 - First boot (no state): if GPS → home = gps pos, calibrate facing, `st.gps = true`. Else ask server `home_get`; if found and gps=false then... cannot trust (turtle may not be at home) → `NEEDS_HELP` "state lost: place at home and send RESET_HOME". If nothing on server and no state: home = `{0,0,0}`, facing 0, `gps=false` (normal fresh install, turtle is at home by definition).
-- `NEEDS_HELP` retry: chest full / no storage re-checked every 30 s automatically.
+- `NEEDS_HELP` retry: chest full / no storage re-checked every `HELP_RETRY` s automatically. "stuck" (timeout, mobs; not "unbreakable") goes back to work after `HELP_RETRY*4` s, at most 5 times (`st.flags.stuckRetries`, reset by progress or `RESUME`), then stays.
+- First boot with GPS and a server home record: adopt it only when the GPS position is in its column or within 3 blocks on every axis; otherwise `NEEDS_HELP` "state lost: send RESET_HOME here or carry to home" (retries the distance check, so carrying it home works).
+- After a reboot: `PAUSED` stays `PAUSED` where it is; `IDLE`/`DONE` stay if at home; work phases resume.
+- `DONE` + `RESUME`: continues when `job.corridor < MAX_CORRIDORS` (after `SET MAX_CORRIDORS`) or after `RESET_JOB`.
+- `UPDATE`: runs at the next home visit (REFUELING) or at once if `IDLE`/`DONE` at home; afterwards (or after the update reboot) the turtle continues with the phase it would have taken.
+- `SET HOME_Y` without GPS: refused (nack) unless at home; applied by shifting the frame, wiping the journal and saving a fresh snapshot.
+- `VERSION` is read from the first line of `miner.lua` at runtime.
 
 ## installer / updater (WP-E)
 
 - `install.lua`: the only interactive program. Writes `tminer.*` settings and `startup.lua`.
 - `updater.lua`: `updater.run(opts) -> updated(bool)`; CLI `updater [--check]`. Called from `startup.lua` before `miner` when the state file says the turtle is at home (or no state). Never rewrites `startup.lua` if present.
-- `startup.lua`: `shell.run("updater")` (guarded with pcall), then `shell.run("miner")`.
+- `startup.lua`: `require("updater").run(opts)` (guarded with pcall, only when at home: last D/S journal line is home, R lines ignored, trailing I line = not home; one reboot max via `.tm_updated`), then `shell.run("miner")`.
+- `install.lua`: if old state files exist, asks whether this is a new home spot (deletes them); with no local state left it sends `home_clear` so the servers forget the old home.
 
 ## Simulator (WP-T)
 
