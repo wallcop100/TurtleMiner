@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- TurtleMiner update server. Serves the files in FILES_DIR to turtles over
 -- rednet protocol "TMINER" (update_check -> update_manifest, file_get -> file).
 -- Versions come from each file's first line: "-- Version: x.y.z".
@@ -159,6 +159,34 @@ if openModems() == 0 then
 end
 if not fs.isDir(FILES_DIR) then fs.makeDir(FILES_DIR) end
 
+-- GitHub auto-pull (github_pull.lua next to this program; optional).
+package.path = "/?.lua;/?;" .. package.path
+local okp, puller = pcall(require, "github_pull")
+if not okp then puller = nil end
+local function doPull(atBoot)
+    if not puller then return end
+    print("Checking GitHub for newer files...")
+    local ok, changed, serverChanged, err = pcall(puller.pull, FILES_DIR, log)
+    if not ok then log("pull error: " .. tostring(changed)) return end
+    if err then log("pull: " .. err) end
+    log(("pull: %d file(s) updated"):format(#changed))
+    if serverChanged then
+        -- New server programs: restart once to run them (guard against loops).
+        local guard = ".pull_reboot"
+        local last = tonumber((function()
+            if not fs.exists(guard) then return nil end
+            local f = fs.open(guard, "r"); local t = f.readAll(); f.close(); return t
+        end)())
+        if not last or os.epoch("utc") - last > 120000 then
+            local f = fs.open(guard, "w"); f.write(tostring(os.epoch("utc"))); f.close()
+            log("server programs updated, rebooting")
+            sleep(1)
+            os.reboot()
+        end
+    end
+end
+doPull(true)
+
 term.clear()
 term.setCursorPos(1, 1)
 print("TurtleMiner update server #" .. ME)
@@ -184,7 +212,16 @@ local function keysLoop()
     end
 end
 
-parallel.waitForAny(listen, keysLoop)
+local function pullLoop()
+    local m = puller and puller.interval() or 0
+    if m <= 0 then while true do sleep(3600) end end
+    while true do
+        sleep(m * 60)
+        doPull(false)
+    end
+end
+
+parallel.waitForAny(listen, keysLoop, pullLoop)
 -- Let the Q key event go before the shell sees it.
 sleep(0)
 print(("Stopped. %d check(s), %d file(s) sent."):format(checks, served))

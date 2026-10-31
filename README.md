@@ -62,6 +62,8 @@ mkdir /files
 
 Copy every file from `miner/` into `/files/` (`config.lua`, `state.lua`, `nav.lua`, `inv.lua`, `mine.lua`, `net.lua`, `miner.lua`, `updater.lua`, `install.lua`, `startup.lua`), e.g. `wget BASE/miner/nav.lua /files/nav.lua`. Then `reboot`.
 
+**Auto-pull from GitHub:** the update server checks GitHub at boot and then every 60 minutes, and copies in any file whose `-- Version:` line is newer (only if it compiles). It also updates its own programs (`central_monitor.lua`, `update_server.lua`) and reboots once when they change. Settings on the server: `set tminer.pull_minutes 0` = boot only, `set tminer.auto_pull false` = off, `set tminer.repo_base <raw URL ending in />` to pull from another branch (e.g. `main` after merging). Needs the HTTP API.
+
 The server reads the version from each file's first line (`-- Version: x.y.z`) and serves the files to turtles that ask. To roll out a change, bump the version line and drop the file in `/files/`: no restart needed. Turtles pick it up the next time they boot at home, or when you send `UPDATE`. A folder `/files/miner/`, if present, is used instead of `/files/` for miners.
 
 If the monitor runs on the same computer, its `startup.lua` and this one collide: rename this one, and add `shell.openTab("update_server")` to the monitor's startup.

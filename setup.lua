@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- One-shot downloader. Usage (in CC, needs the HTTP API enabled):
 --   wget run <BASE>/setup.lua server    -- update server + monitor on one computer
 --   wget run <BASE>/setup.lua monitor   -- monitor only
@@ -39,6 +39,7 @@ if role == "server" or role == "monitor" then
     all({ { "servers/central_monitor.lua", "central_monitor.lua" } })
     if role == "server" then
         all({ { "servers/update_server/update_server.lua", "update_server.lua" } })
+        all({ { "servers/update_server/github_pull.lua", "github_pull.lua" } })
         for _, f in ipairs(MINER) do all({ { "miner/" .. f, "files/" .. f } }) end
         -- One startup that runs both the monitor (with crash restart) and the update server.
         all({ { "servers/startup.lua", "monitor_startup.lua" } })
