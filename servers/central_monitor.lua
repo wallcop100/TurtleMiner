@@ -1,917 +1,1085 @@
--- Version: 3.2.0
--- Added: Wired-bridge system – packets are forwarded between servers on wired network
--- Added: Mesh network relay system for extended communication range
--- Central Turtle Monitoring System - TOUCHSCREEN EDITION
+-- Version: 4.0.0
+-- TurtleMiner central monitor. Speaks TMINER v1 only (docs/PROTOCOL.md).
+--   Server mode (normal computer): relays TMINER traffic between all modems, tracks turtles,
+--     keeps home records, broadcasts `fleet`, sends commands to one turtle at a time.
+--   Pocket mode (`pocket` global present): read-only view built from `fleet` snapshots,
+--     commands go out as `cmd_relay` through the server.
+-- Usage: central_monitor [monitorSide|auto|none] [textScale]
 
-local PROTOCOL          = "TURTLE_STATUS"
-local MINED_PROTOCOL    = "TURTLE_MINED_DB"
-local COMMAND_PROTOCOL  = "TURTLE_COMMAND"
-local POSITION_PROTOCOL = "TURTLE_POSITION"
-local BRIDGE_PROTOCOL   = "TURTLE_BRIDGE"    -- server-to-server wired bridge
-local TIMEOUT = 15
-local REFRESH_RATE = 0.5
+local M = {}
 
--- Turtle tracking
-local turtles = {}
-local turtlePositions = {}
-local minedBlocks = {}
-local minedDirty = false
-local minedMsgCount = 0
+local PROTO            = "TMINER"
+local MAX_HOPS         = 4
+local DEDUPE_MAX       = 256
+local SILENT_MS        = 60000
+local FLEET_EVERY_MS   = 5000
+local ACK_TIMEOUT_MS   = 3000
+local ACK_RETRIES      = 3       -- server: 1 send + 3 retries
+local RELAY_TIMEOUT_MS = 15000   -- pocket: server needs up to 12 s before it reports a failure
+local RELAY_RETRIES    = 1
+local DONE_KEEP_MS     = 60000
+local TICK             = 0.5
+local HOME_FILE        = "miner_homes.db"
+local LOG_FILE         = "miner_events.log"
+local LOG_MAX          = 500
+local LOG_KEEP         = 400
+local EVENTS_KEEP      = 5
 
--- Relay tracking
-local recentlyRelayed = {}
-local MAX_RELAY_HOPS = 3
-local RELAY_CACHE_SIZE = 100
+local CMDS = {
+    RETURN_HOME = true, PAUSE = true, RESUME = true, SET = true, REQUEST_STATUS = true,
+    RESET_JOB = true, RESET_HOME = true, UPDATE = true, REBOOT = true,
+}
+local FOCUS_LIST = {
+    "all", "diamond", "iron", "gold", "copper", "redstone", "lapis",
+    "emerald", "coal", "ancient_debris", "nether_quartz", "nether_gold",
+}
+local PHASE_SHORT = {
+    BOOT = "BOOT", RECOVER = "RECOVR", TO_WORK = "TOWORK", MINING = "MINING", VEIN = "VEIN",
+    RETURNING = "RETURN", UNLOADING = "UNLOAD", REFUELING = "REFUEL", IDLE = "IDLE",
+    PAUSED = "PAUSED", NEEDS_HELP = "HELP!", ERROR = "ERROR", DONE = "DONE", SILENT = "SILENT",
+}
+local ENVELOPE = { v = true, kind = true, to = true, boot = true, seq = true, hops = true, ts = true, from = true }
 
--- Bridge (wired peer server) tracking
-local wirelessModemName = nil     -- name of the wireless modem peripheral, if any
-local wiredModemName    = nil       -- name of the wired modem peripheral, if any
-local bridgePeers     = {}        -- [computerId] = { lastSeen }
-local recentlyBridged = {}        -- dedup cache for bridge packets
-local BRIDGE_CACHE_SIZE = 200
+-- ---------------------------------------------------------------------------
+-- State
+-- ---------------------------------------------------------------------------
+local S = {
+    mode = "server", myId = 0, boot = 0, seq = 0, netOk = false,
+    seen = {}, seenQ = {}, seenPos = 0,
+    turtles = {}, pending = {}, done = {}, homes = {},
+    log = {}, cmdCounter = 0, lastFleet = 0, lastDirtyTick = 0,
+    fleetFrom = nil, fleetLabel = nil, fleetAt = 0,
+    uis = {}, dirtyQueued = false,
+}
+M.S = S
 
--- GUI state
-local currentPage = 1
-local showCommandMenu = false
-local selectedTurtleId = nil
-local commandInput = ""
-local inputMode = nil
+local function now() return os.epoch("utc") end
 
--- Monitor/display setup
-local monitor = peripheral.find("monitor")
-local display = monitor or term
-if monitor then
-    monitor.setTextScale(0.5)
-    print("Monitor detected - using touchscreen")
-else
-    print("No monitor - using terminal")
+local function copy(t)
+    local c = {}
+    for k, v in pairs(t) do c[k] = v end
+    return c
 end
 
--- Button system
-local buttons = {}
-
-local function createButton(x, y, width, height, text, color, callback)
-    return {
-        x = x, y = y, width = width, height = height,
-        text = text, color = color or colors.blue,
-        callback = callback
-    }
+local function trunc(s, n)
+    s = tostring(s or "")
+    if n < 1 then return "" end
+    if #s > n then return s:sub(1, n) end
+    return s
 end
 
-local function isButtonClicked(button, clickX, clickY)
-    return clickX >= button.x and clickX < button.x + button.width and
-           clickY >= button.y and clickY < button.y + button.height
-end
+local function pad(s, n) s = trunc(s, n); return s .. string.rep(" ", n - #s) end
+local function lpad(s, n) s = trunc(s, n); return string.rep(" ", n - #s) .. s end
 
-local function drawButton(button, pressed)
-    local bgColor = pressed and colors.lightGray or button.color
-    display.setBackgroundColor(bgColor)
-    display.setTextColor(colors.white)
-    
-    for dy = 0, button.height - 1 do
-        display.setCursorPos(button.x, button.y + dy)
-        display.write(string.rep(" ", button.width))
+local function markDirty()
+    if not S.dirtyQueued then
+        S.dirtyQueued = true
+        if os.queueEvent then os.queueEvent("tminer_redraw") end
     end
-    
-    local textY = button.y + math.floor(button.height / 2)
-    local textX = button.x + math.floor((button.width - #button.text) / 2)
-    display.setCursorPos(textX, textY)
-    display.write(button.text)
 end
 
--- Database functions
-local function coordKey(x, y, z)
-    return string.format("%d,%d,%d", x, y, z)
-end
-
-local function getPath(name)
-    return fs.exists("/disk") and ("/disk/" .. name) or ("/" .. name)
-end
-
-local function loadDb(name)
-    local path = getPath(name)
-    if not fs.exists(path) then return {} end
-    
-    local ok, data = pcall(function()
-        local h = fs.open(path, "r")
-        if not h then return nil end
-        local contents = h.readAll()
-        h.close()
-        return textutils.unserialize(contents)
-    end)
-    
-    return (ok and type(data) == "table") and data or {}
-end
-
-local function saveDb(name, data)
-    pcall(function()
-        local h = fs.open(getPath(name), "w")
-        if h then
-            h.write(textutils.serialize(data))
-            h.close()
-        end
-    end)
-end
-
--- Network functions
-local function initModem()
-    -- Open wireless modem (optional - for direct turtle communication)
-    local wirelessModem = peripheral.find("modem", function(_, m) return m.isWireless() end)
-    if wirelessModem then
-        wirelessModemName = peripheral.getName(wirelessModem)
-        rednet.open(wirelessModemName)
-        print("Wireless modem opened: " .. wirelessModemName)
-    else
-        print("No wireless modem - running in bridge-only mode")
-    end
-
-    -- Open wired modem (optional - enables server bridging)
-    local wiredModem = peripheral.find("modem", function(_, m) return not m.isWireless() end)
-    if wiredModem then
-        wiredModemName = peripheral.getName(wiredModem)
-        rednet.open(wiredModemName)
-        print("Wired modem opened: " .. wiredModemName .. " (bridge enabled)")
-    else
-        print("No wired modem found - bridge disabled")
-    end
-
-    -- Need at least one modem to do anything useful
-    if not wirelessModem and not wiredModem then
-        error("No modem found! Attach a wireless and/or wired modem.")
-    end
-
+-- ---------------------------------------------------------------------------
+-- Files (atomic write: tmp + move)
+-- ---------------------------------------------------------------------------
+local function writeAtomic(path, text)
+    local tmp = path .. ".tmp"
+    local h = fs.open(tmp, "w")
+    if not h then return false end
+    h.write(text)
+    h.close()
+    if fs.exists(path) then fs.delete(path) end
+    fs.move(tmp, path)
     return true
 end
 
--- Relay system functions
-local function cleanRelayCache()
-    local cacheSize = 0
-    for _ in pairs(recentlyRelayed) do cacheSize = cacheSize + 1 end
-    
-    if cacheSize > RELAY_CACHE_SIZE then
-        local toRemove = {}
-        local count = 0
-        for msgId in pairs(recentlyRelayed) do
-            table.insert(toRemove, msgId)
-            count = count + 1
-            if count > RELAY_CACHE_SIZE / 2 then break end
-        end
-        for _, msgId in ipairs(toRemove) do
-            recentlyRelayed[msgId] = nil
-        end
+local function readFile(path)
+    if not fs.exists(path) then return nil end
+    local h = fs.open(path, "r")
+    if not h then return nil end
+    local s = h.readAll()
+    h.close()
+    return s
+end
+
+local function loadHomes()
+    for _, p in ipairs({ HOME_FILE, HOME_FILE .. ".tmp" }) do
+        local s = readFile(p)
+        local t = s and textutils.unserialize(s)
+        if type(t) == "table" then return t end
     end
+    return {}
 end
 
-local function getMessageId(senderId, timestamp)
-    return tostring(senderId) .. "_" .. tostring(timestamp)
+local function saveHomes()
+    pcall(writeAtomic, HOME_FILE, textutils.serialize(S.homes))
 end
 
-local function relayMessage(senderId, message, protocol)
-    -- Don't relay our own messages
-    if senderId == os.getComputerID() then return end
-    
-    -- Check relay hops
-    local hops = message.relayHops or 0
-    if hops >= MAX_RELAY_HOPS then return end
-    
-    -- Check if already relayed
-    local msgId = getMessageId(message.originalSender or senderId, message.timestamp or os.epoch("utc"))
-    if recentlyRelayed[msgId] then return end
-    
-    -- Mark as relayed
-    recentlyRelayed[msgId] = true
-    cleanRelayCache()
-    
-    -- Create relayed version
-    local relayedMsg = {}
-    for k, v in pairs(message) do relayedMsg[k] = v end
-    relayedMsg.relayHops = hops + 1
-    relayedMsg.relayedBy = os.getComputerID()
-    relayedMsg.originalSender = relayedMsg.originalSender or senderId
-    
-    -- Broadcast wirelessly (only if a wireless modem is attached)
-    if wirelessModemName then
+-- ---------------------------------------------------------------------------
+-- Event log (server: file, rotating; pocket: memory only)
+-- ---------------------------------------------------------------------------
+local function stamp(ms)
+    local ok, s = pcall(os.date, "!%m-%d %H:%M:%S", math.floor(ms / 1000))
+    return ok and s or tostring(math.floor(ms / 1000))
+end
+
+local function loadLog()
+    local s = readFile(LOG_FILE)
+    if not s then return end
+    for line in s:gmatch("[^\n]+") do S.log[#S.log + 1] = line end
+    while #S.log > LOG_MAX do table.remove(S.log, 1) end
+end
+
+local function logLine(text)
+    local line = stamp(now()) .. " " .. text
+    S.log[#S.log + 1] = line
+    if #S.log > LOG_MAX then
+        local keep = {}
+        for i = #S.log - LOG_KEEP + 1, #S.log do keep[#keep + 1] = S.log[i] end
+        S.log = keep
+        if S.mode == "server" then pcall(writeAtomic, LOG_FILE, table.concat(S.log, "\n") .. "\n") end
+    elseif S.mode == "server" then
         pcall(function()
-            rednet.broadcast(relayedMsg, protocol)
+            local h = fs.open(LOG_FILE, "a")
+            if h then h.write(line .. "\n"); h.close() end
         end)
     end
+    markDirty()
+end
+M.logLine = logLine
+
+-- ---------------------------------------------------------------------------
+-- Network
+-- ---------------------------------------------------------------------------
+local function markSeen(key)
+    if S.seen[key] then return false end
+    S.seenPos = S.seenPos % DEDUPE_MAX + 1
+    local old = S.seenQ[S.seenPos]
+    if old then S.seen[old] = nil end
+    S.seenQ[S.seenPos] = key
+    S.seen[key] = true
+    return true
 end
 
--- =============================================================================
--- Bridge system: forwards packets between servers connected by wired network
--- =============================================================================
-
--- Clean the bridge dedup cache when it gets too large
-local function cleanBridgeCache()
-    local size = 0
-    for _ in pairs(recentlyBridged) do size = size + 1 end
-    if size > BRIDGE_CACHE_SIZE then
-        local toRemove = {}
-        local count = 0
-        for k in pairs(recentlyBridged) do
-            table.insert(toRemove, k)
-            count = count + 1
-            if count > BRIDGE_CACHE_SIZE / 2 then break end
-        end
-        for _, k in ipairs(toRemove) do recentlyBridged[k] = nil end
-    end
+local function send(kind, to, body)
+    local msg = body and copy(body) or {}
+    S.seq = S.seq + 1
+    msg.v, msg.kind, msg.from, msg.to = 1, kind, S.myId, to
+    msg.boot, msg.seq, msg.ts, msg.hops = S.boot, S.seq, now(), 0
+    markSeen(msg.from .. ":" .. msg.boot .. ":" .. msg.seq)
+    if S.netOk then pcall(rednet.broadcast, msg, PROTO) end
+    return msg
 end
 
--- Unique ID for a bridge packet so we never process the same one twice
-local function bridgePacketId(originServerId, originalSenderId, ts)
-    return tostring(originServerId) .. "_" .. tostring(originalSenderId) .. "_" .. tostring(ts)
-end
-
--- Forward a turtle packet (already received and processed locally) to all wired peers.
--- originServerId: the server that first bridged this packet (us, unless re-bridging).
--- originalSenderId: the turtle/computer that sent the original packet.
-local function bridgeToWired(protocol, originalSenderId, payload, originServerId)
-    if not wiredModemName then return end
-
-    originServerId = originServerId or os.getComputerID()
-
-    -- Stamp a bridgeId so receiving servers can dedup
-    local ts = payload.timestamp or os.epoch("utc")
-    local bid = bridgePacketId(originServerId, originalSenderId, ts)
-
-    -- Don't re-bridge something we already bridged
-    if recentlyBridged[bid] then return end
-    recentlyBridged[bid] = true
-    cleanBridgeCache()
-
-    local bridgeMsg = {
-        type             = "BRIDGE_PACKET",
-        innerProtocol    = protocol,
-        originalSenderId = originalSenderId,
-        originServerId   = originServerId,
-        bridgeId         = bid,
-        payload          = payload,
-        timestamp        = ts,
-    }
-
-    pcall(function()
-        rednet.broadcast(bridgeMsg, BRIDGE_PROTOCOL)
-    end)
-end
-
--- Process an incoming BRIDGE_PACKET from a peer server on the wired network.
--- Returns true if the packet was new and was processed.
-local handleBridgePacket   -- forward-declared; defined after handleMinedMessage etc.
-
-local function updateTurtle(id, data)
-    local turtle = turtles[id] or {}
-    
-    -- Use originalSender if this is a relayed message
-    local actualId = data.originalSender or id
-    turtle.id = actualId
-    
-    turtle.label = data.label or ("Turtle-" .. actualId)
-    turtle.fuel = data.fuel or 0
-    turtle.message = data.message or turtle.message or "Idle"
-    turtle.lastSeen = os.epoch("utc")
-    turtle.connected = true
-    turtle.slotsUsed = (data.inventory and data.inventory.slotsUsed) or 0
-    
-    -- Track if message was relayed
-    if data.relayHops and data.relayHops > 0 then
-        turtle.relayed = true
-        turtle.relayHops = data.relayHops
-    else
-        turtle.relayed = false
-        turtle.relayHops = 0
-    end
-    
-    if data.position then
-        turtle.currentX = data.position.x
-        turtle.currentY = data.position.y
-        turtle.currentZ = data.position.z
-    end
-    
-    -- Preserve existing values if not provided in update
-    turtle.oresMined = data.oresMined or turtle.oresMined
-    turtle.currentBranch = data.currentBranch or turtle.currentBranch
-    turtle.targetY = data.targetY or turtle.targetY
-    turtle.focusedOre = data.focusedOre or turtle.focusedOre
-    turtle.pattern = data.pattern or turtle.pattern
-    turtle.currentY = data.currentY or turtle.currentY
-    turtle.miningY = data.miningY or turtle.miningY
-    turtle.hasGPS = data.hasGPS or turtle.hasGPS
-    turtle.distanceFromHome = data.distanceFromHome or turtle.distanceFromHome
-    
-    turtles[actualId] = turtle
-end
-
-local function handleMinedMessage(senderId, message)
-    minedMsgCount = minedMsgCount + 1
-    
-    if message.type == "BLOCK_MINED" and message.x and message.y and message.z then
-        local turtleId = message.turtleId or senderId
-        local hasGPS = message.hasGPS or false
-        local key = hasGPS and coordKey(message.x, message.y, message.z) 
-                    or ("T" .. turtleId .. "_" .. coordKey(message.x, message.y, message.z))
-        
-        if not minedBlocks[key] then
-            minedBlocks[key] = true
-            minedDirty = true
-        end
-    elseif message.type == "CHECK_BLOCK" and message.x and message.y and message.z then
-        local turtleId = message.turtleId or senderId
-        local hasGPS = message.hasGPS or false
-        local key = hasGPS and coordKey(message.x, message.y, message.z)
-                    or ("T" .. turtleId .. "_" .. coordKey(message.x, message.y, message.z))
-        
-        rednet.send(senderId, {
-            type = "BLOCK_STATUS",
-            x = message.x, y = message.y, z = message.z,
-            mined = minedBlocks[key] == true
-        }, MINED_PROTOCOL)
-    end
-end
-
-local function handlePositionMessage(senderId, message)
-    if message.type == "SAVE_HOME_POSITION" and message.turtleId then
-        turtlePositions[message.turtleId] = {
-            homePosition = message.position,
-            homeFacing = message.facing,
-            lastUpdated = os.epoch("utc")
-        }
-        saveDb("turtle_positions.db", turtlePositions)
-        rednet.send(senderId, {type = "POSITION_SAVED", turtleId = message.turtleId}, POSITION_PROTOCOL)
-    elseif message.type == "REQUEST_HOME_POSITION" and message.turtleId then
-        local posData = turtlePositions[message.turtleId]
-        if posData then
-            rednet.send(senderId, {
-                type = "HOME_POSITION",
-                turtleId = message.turtleId,
-                position = posData.homePosition,
-                facing = posData.homeFacing
-            }, POSITION_PROTOCOL)
+local function openModems()
+    local any = false
+    for _, name in ipairs(peripheral.getNames()) do
+        if peripheral.getType(name) == "modem" then
+            if pcall(rednet.open, name) then any = true end
         end
     end
+    S.netOk = any or (rednet.isOpen and rednet.isOpen()) or false
+    return S.netOk
 end
 
-local function sendCommandToTurtle(turtleId, command, params)
-    local cmdMsg = {command = command, params = params or {}, timestamp = os.epoch("utc")}
-    -- Broadcast on wireless so nearby turtles receive the command directly
-    if wirelessModemName then
-        rednet.broadcast(cmdMsg, COMMAND_PROTOCOL)
+-- ---------------------------------------------------------------------------
+-- Turtle model
+-- ---------------------------------------------------------------------------
+local function getRec(id, create)
+    local r = S.turtles[id]
+    if not r and create then
+        r = { id = id, st = {}, lastSeen = 0, events = {} }
+        S.turtles[id] = r
     end
-    -- Bridge to wired peers so turtles near remote servers also receive it
-    bridgeToWired(COMMAND_PROTOCOL, os.getComputerID(), cmdMsg)
-
-    local startTime = os.epoch("utc") / 1000
-    while (os.epoch("utc") / 1000 - startTime) < 3 do
-        local senderId, response = rednet.receive(COMMAND_PROTOCOL, 1)
-        if senderId == turtleId and response and response.type == "COMMAND_ACK" then
-            return true
-        end
-    end
-    return false
+    return r
 end
 
--- Drawing functions
-local function drawHeader()
-    local width = display.getSize()
-    display.setBackgroundColor(colors.blue)
-    display.setTextColor(colors.white)
-    display.setCursorPos(1, 1)
-    display.clearLine()
-    local title = " TURTLE COMMAND CENTER "
-    display.setCursorPos(math.floor((width - #title) / 2) + 1, 1)
-    display.write(title)
+local function labelOf(r)
+    return r.st.label or ("turtle " .. r.id)
 end
 
-local function drawStats()
-    display.setBackgroundColor(colors.black)
-    display.setTextColor(colors.lightGray)
-    display.setCursorPos(1, 2)
-    display.clearLine()
-    
-    local active = 0
-    for _, t in pairs(turtles) do
-        if t.connected then active = active + 1 end
-    end
-    
-    local posCount, minedCount, peerCount = 0, 0, 0
-    for _ in pairs(turtlePositions) do posCount  = posCount  + 1 end
-    for _ in pairs(minedBlocks)     do minedCount = minedCount + 1 end
+local function nameOf(r) return labelOf(r) .. " #" .. r.id end
 
-    -- Count live bridge peers (seen within last 30 s)
-    local now = os.epoch("utc")
-    for _, p in pairs(bridgePeers) do
-        if (now - p.lastSeen) / 1000 < 30 then peerCount = peerCount + 1 end
-    end
-
-    local statsLine
-    if wiredModemName then
-        statsLine = string.format("Active: %d | Mined: %d | Peers: %d", active, minedCount, peerCount)
-    else
-        statsLine = string.format("Active: %d | Saved: %d | Mined: %d", active, posCount, minedCount)
-    end
-    display.write(statsLine)
+local function alertOf(r, t)
+    if t - (r.lastSeen or 0) > SILENT_MS then return "SILENT" end
+    local ph = r.st.phase
+    if ph == "NEEDS_HELP" or ph == "ERROR" then return ph end
+    return nil
 end
 
-local function drawTurtleCard(turtle, x, y, width, height)
-    display.setBackgroundColor(colors.lightGray)
-    for dy = 0, height - 1 do
-        display.setCursorPos(x, y + dy)
-        display.write(string.rep(" ", width))
-    end
-    
-    -- Line 0: Status + Name
-    display.setCursorPos(x + 1, y)
-    display.setTextColor(turtle.connected and colors.lime or colors.red)
-    display.write(turtle.connected and "[ON]" or "[OFF]")
-    
-    -- Relay indicator (shows if message was relayed)
-    if turtle.relayed and turtle.relayHops and turtle.relayHops > 0 then
-        display.setTextColor(colors.orange)
-        display.write(" R" .. turtle.relayHops)
-    end
-    
-    display.setTextColor(colors.black)
-    local nameStart = (turtle.relayed and 12) or 7
-    display.setCursorPos(x + nameStart, y)
-    local name = turtle.label
-    local maxNameLen = width - nameStart - 1
-    if #name > maxNameLen then name = name:sub(1, maxNameLen - 3) .. "..." end
-    display.write(name)
-    
-    -- Line 1: ID + Fuel + Inventory
-    display.setTextColor(colors.gray)
-    display.setCursorPos(x + 1, y + 1)
-    display.write("ID:" .. turtle.id)
-    
-    display.setCursorPos(x + 10, y + 1)
-    display.write("Fuel:")
-    display.setCursorPos(x + 15, y + 1)
-    if turtle.fuel == "unlimited" then
-        display.setTextColor(colors.lime)
-        display.write("Unlim")
-    elseif turtle.fuel > 1000 then
-        display.setTextColor(colors.lime)
-        display.write(turtle.fuel)
-    elseif turtle.fuel > 100 then
-        display.setTextColor(colors.yellow)
-        display.write(turtle.fuel)
-    else
-        display.setTextColor(colors.red)
-        display.write(turtle.fuel)
-    end
-    
-    display.setTextColor(colors.gray)
-    display.setCursorPos(x + width - 8, y + 1)
-    display.write("Inv:" .. turtle.slotsUsed)
-    
-    -- Line 2: Position
-    display.setCursorPos(x + 1, y + 2)
-    if turtle.currentX and turtle.currentY and turtle.currentZ then
-        local pos = string.format("Pos: (%d,%d,%d)", turtle.currentX, turtle.currentY, turtle.currentZ)
-        if #pos > width - 2 then
-            pos = string.format("Pos: Y:%d", turtle.currentY)
-        end
-        display.write(pos)
-    else
-        display.write("Pos: Unknown")
-    end
-    
-    -- Line 3: Mining stats
-    display.setCursorPos(x + 1, y + 3)
-    if turtle.oresMined then
-        display.write("Ores:" .. turtle.oresMined)
-    end
-    if turtle.currentBranch then
-        local branchText = " | Branch #" .. turtle.currentBranch
-        if width > 30 then
-            display.write(branchText)
-        end
-    end
-    
-    -- Line 4: Target Y + Focused Ore
-    display.setCursorPos(x + 1, y + 4)
-    if turtle.targetY then
-        display.write("Target Y:" .. turtle.targetY)
-    end
-    if turtle.focusedOre and width > 30 then
-        display.setCursorPos(x + 20, y + 4)
-        display.write("Ore:" .. turtle.focusedOre)
-    end
-    
-    -- Line 5: Status message
-    if turtle.message then
-        display.setCursorPos(x + 1, y + 5)
-        display.setTextColor(colors.cyan)
-        local msg = turtle.message
-        if #msg > width - 3 then
-            msg = msg:sub(1, width - 6) .. "..."
-        end
-        display.write(msg)
-    end
-    
-    -- Line 6: Last seen (if card is tall enough)
-    if height >= 7 and turtle.lastSeen then
-        display.setCursorPos(x + 1, y + 6)
-        display.setTextColor(colors.gray)
-        local age = math.floor((os.epoch("utc") - turtle.lastSeen) / 1000)
-        display.write("Updated: " .. age .. "s ago")
-    end
+local function beep()
+    local sp = peripheral.find and peripheral.find("speaker")
+    if sp then pcall(sp.playNote, "bell", 3, 18) end
 end
 
-local function drawCommandMenu()
-    buttons = {}
-    local width, height = display.getSize()
-    display.setBackgroundColor(colors.black)
-    display.clear()
-    
-    local menuWidth = math.min(40, width - 4)
-    local menuHeight = math.min(20, height - 4)
-    local menuX = math.floor((width - menuWidth) / 2) + 1
-    local menuY = math.floor((height - menuHeight) / 2) + 1
-    
-    -- Background
-    display.setBackgroundColor(colors.gray)
-    for dy = 0, menuHeight - 1 do
-        display.setCursorPos(menuX, menuY + dy)
-        display.write(string.rep(" ", menuWidth))
-    end
-    
-    -- Header
-    display.setBackgroundColor(colors.blue)
-    display.setTextColor(colors.white)
-    display.setCursorPos(menuX, menuY)
-    local title = " Command Turtle #" .. selectedTurtleId .. " "
-    display.write(title .. string.rep(" ", menuWidth - #title))
-    
-    -- Input modes
-    if inputMode == "targetY" then
-        display.setBackgroundColor(colors.gray)
-        display.setTextColor(colors.white)
-        display.setCursorPos(menuX + 2, menuY + 2)
-        display.write("Enter Target Y (-64 to 320):")
-        display.setCursorPos(menuX + 2, menuY + 3)
-        display.write("> " .. commandInput .. "_")
-        
-        local okBtn = createButton(menuX + 5, menuY + 5, 10, 3, "OK", colors.green, function()
-            local y = tonumber(commandInput)
-            if y and y >= -64 and y <= 320 then
-                sendCommandToTurtle(selectedTurtleId, "SET_TARGET_Y", {targetY = y})
-                showCommandMenu = false
-                inputMode = nil
-                commandInput = ""
+local function updateAlerts(t)
+    for _, r in pairs(S.turtles) do
+        local a = alertOf(r, t)
+        if a ~= r.alert then
+            if a then
+                logLine("ALERT " .. nameOf(r) .. ": " .. a .. (r.st.reason and (" (" .. r.st.reason .. ")") or ""))
+                beep()
+            else
+                logLine("OK " .. nameOf(r) .. ": alert " .. tostring(r.alert) .. " cleared")
             end
-        end)
-        
-        local cancelBtn = createButton(menuX + menuWidth - 15, menuY + 5, 10, 3, "Cancel", colors.red, function()
-            showCommandMenu = false
-            inputMode = nil
-            commandInput = ""
-        end)
-        
-        table.insert(buttons, okBtn)
-        table.insert(buttons, cancelBtn)
-        drawButton(okBtn)
-        drawButton(cancelBtn)
-        
-    elseif inputMode == "oreType" then
-        display.setBackgroundColor(colors.gray)
-        display.setTextColor(colors.white)
-        display.setCursorPos(menuX + 2, menuY + 2)
-        display.write("Select Ore Type:")
-        
-        local ores = {
-            {name = "Diamond", value = "diamond"},
-            {name = "Emerald", value = "emerald"},
-            {name = "Gold", value = "gold"},
-            {name = "Iron", value = "iron"},
-            {name = "All Ores", value = "all"}
-        }
-        
-        local btnY = menuY + 4
-        for _, ore in ipairs(ores) do
-            local btn = createButton(menuX + 2, btnY, menuWidth - 4, 2, ore.name, colors.blue, function()
-                sendCommandToTurtle(selectedTurtleId, "FOCUS_ORE", {oreType = ore.value})
-                showCommandMenu = false
-                inputMode = nil
-            end)
-            table.insert(buttons, btn)
-            drawButton(btn)
-            btnY = btnY + 3
-        end
-    else
-        -- Main menu
-        local commands = {
-            {name = "H Return Home", command = "RETURN_HOME", color = colors.orange},
-            {name = "Y Set Target Y", command = "SET_TARGET_Y", color = colors.blue},
-            {name = "O Focus Ore", command = "FOCUS_ORE", color = colors.blue},
-            {name = "R Resume Mining", command = "RESUME_MINING", color = colors.green},
-            {name = "S Request Status", command = "REQUEST_STATUS", color = colors.blue},
-            {name = "X Cancel", command = nil, color = colors.red}
-        }
-        
-        local btnY = menuY + 2
-        for _, cmd in ipairs(commands) do
-            local btn = createButton(menuX + 2, btnY, menuWidth - 4, 2, cmd.name, cmd.color, function()
-                if cmd.command == "SET_TARGET_Y" then
-                    inputMode = "targetY"
-                    commandInput = ""
-                elseif cmd.command == "FOCUS_ORE" then
-                    inputMode = "oreType"
-                elseif cmd.command then
-                    sendCommandToTurtle(selectedTurtleId, cmd.command, {})
-                    showCommandMenu = false
-                else
-                    showCommandMenu = false
-                end
-            end)
-            table.insert(buttons, btn)
-            drawButton(btn)
-            btnY = btnY + 3
+            r.alert = a
+            markDirty()
         end
     end
 end
 
-local function drawMainScreen()
-    buttons = {}
-    local width, height = display.getSize()
-    display.setBackgroundColor(colors.black)
-    display.clear()
-    
-    drawHeader()
-    drawStats()
-    
-    local ids = {}
-    for id in pairs(turtles) do table.insert(ids, id) end
-    table.sort(ids)
-    
-    if #ids == 0 then
-        display.setTextColor(colors.gray)
-        display.setCursorPos(2, 5)
-        display.write("No turtles connected...")
+local function stripEnvelope(msg)
+    local t = {}
+    for k, v in pairs(msg) do if not ENVELOPE[k] then t[k] = v end end
+    return t
+end
+
+local function onStatus(msg)
+    local r = getRec(msg.from, true)
+    local old = r.st.phase
+    r.st = stripEnvelope(msg)
+    r.lastSeen = now()
+    if old ~= r.st.phase then
+        logLine(nameOf(r) .. ": " .. tostring(old or "?") .. " -> " .. tostring(r.st.phase)
+            .. (r.st.reason and (" (" .. r.st.reason .. ")") or ""))
+    end
+    updateAlerts(r.lastSeen)
+end
+
+local function onHello(msg)
+    local r = getRec(msg.from, true)
+    if msg.label then r.st.label = msg.label end
+    if msg.version then r.st.version = msg.version end
+    if msg.gps ~= nil then r.st.gps = msg.gps end
+    r.lastSeen = now()
+    logLine(nameOf(r) .. ": online v" .. tostring(msg.version) .. (msg.gps and " gps" or " no-gps"))
+end
+
+local function onEvent(msg)
+    local r = getRec(msg.from, true)
+    r.lastSeen = now()
+    local text = trunc(msg.text, 200)
+    table.insert(r.events, 1, { level = msg.level, text = text, at = r.lastSeen })
+    while #r.events > EVENTS_KEEP do table.remove(r.events) end
+    logLine(nameOf(r) .. " [" .. tostring(msg.level or "info") .. "] " .. text)
+end
+
+-- Pocket: merge a fleet snapshot (newest lastSeen wins per turtle).
+local function onFleet(msg)
+    if type(msg.turtles) ~= "table" then return end
+    S.fleetFrom = (type(msg.server) == "table" and tonumber(msg.server.id)) or msg.from
+    S.fleetLabel = type(msg.server) == "table" and msg.server.label or nil
+    S.fleetAt = now()
+    for _, t in ipairs(msg.turtles) do
+        local id = type(t) == "table" and tonumber(t.id)
+        if id then
+            local r = getRec(id, true)
+            local ls = tonumber(t.lastSeen) or 0
+            if ls >= r.lastSeen then
+                local st = copy(t)
+                st.id, st.lastSeen, st.alert = nil, nil, nil
+                r.st = st
+                r.lastSeen = ls
+            end
+        end
+    end
+    updateAlerts(now())
+    markDirty()
+end
+
+-- ---------------------------------------------------------------------------
+-- Commands (non-blocking: pending table, retries driven by tick)
+-- ---------------------------------------------------------------------------
+local function cmdText(cmd, params)
+    if cmd == "SET" and type(params) == "table" then
+        return tostring(params.key) .. "=" .. tostring(params.value)
+    end
+    return tostring(cmd)
+end
+
+local function newCmdId()
+    S.cmdCounter = S.cmdCounter + 1
+    return S.myId .. "-" .. S.boot .. "-" .. S.cmdCounter
+end
+
+local function finishCmd(p, ok, err)
+    S.pending[p.id] = nil
+    local r = getRec(p.target, true)
+    r.cmd = { name = cmdText(p.cmd, p.params), state = ok and "ok" or "failed", err = err, at = now() }
+    logLine("CMD " .. r.cmd.name .. " -> " .. nameOf(r) .. ": " .. (ok and "ok" or ("FAILED " .. tostring(err))))
+    if S.mode == "server" then
+        S.done[p.id] = { ok = ok, err = err, target = p.target, at = now() }
+        if p.origin then send("ack", p.origin, { id = p.id, ok = ok, err = err, target = p.target }) end
+    end
+end
+
+local function transmitCmd(p)
+    if S.mode == "server" then
+        send("cmd", p.target, { id = p.id, cmd = p.cmd, params = p.params })
+        p.deadline = now() + ACK_TIMEOUT_MS
+    else
+        p.server = S.fleetFrom or p.server
+        send("cmd_relay", p.server, { target = p.target, cmd = p.cmd, params = p.params, id = p.id })
+        p.deadline = now() + RELAY_TIMEOUT_MS
+    end
+end
+
+-- Send one command to ONE turtle. Returns the command id.
+function M.issueCmd(target, cmd, params, origin, id)
+    id = id or newCmdId()
+    local p = { id = id, target = target, cmd = cmd, params = params or {}, tries = 1, origin = origin }
+    local r = getRec(target, true)
+    if S.mode == "pocket" and not S.fleetFrom then
+        r.cmd = { name = cmdText(cmd, p.params), state = "failed", err = "no server heard", at = now() }
+        markDirty()
+        return id
+    end
+    S.pending[id] = p
+    transmitCmd(p)
+    r.cmd = { name = cmdText(cmd, p.params), state = "pending", tries = 1, at = now() }
+    markDirty()
+    return id
+end
+
+local function onAck(msg)
+    local p = S.pending[msg.id]
+    if not p then return end
+    if S.mode == "server" then
+        if msg.from ~= p.target then return end
+    elseif msg.from ~= p.target and msg.from ~= p.server then
         return
     end
-    
-    local cardHeight = 8  -- Full status display
-    local cardSpacing = 1
-    local cardsPerPage = math.floor((height - 6) / (cardHeight + cardSpacing))
-    local totalPages = math.ceil(#ids / cardsPerPage)
-    if currentPage > totalPages then currentPage = totalPages end
-    
-    local startIndex = (currentPage - 1) * cardsPerPage + 1
-    local endIndex = math.min(startIndex + cardsPerPage - 1, #ids)
-    
-    local cardY = 4
-    for i = startIndex, endIndex do
-        local id = ids[i]
-        drawTurtleCard(turtles[id], 2, cardY, width - 2, cardHeight)
-        
-        local btn = createButton(2, cardY, width - 2, cardHeight, "", colors.lightGray, function()
-            selectedTurtleId = id
-            showCommandMenu = true
-            inputMode = nil
-            commandInput = ""
-        end)
-        table.insert(buttons, btn)
-        
-        cardY = cardY + cardHeight + cardSpacing
-    end
-    
-    -- Navigation
-    if currentPage > 1 then
-        local prevBtn = createButton(2, height - 1, 12, 1, "< Prev", colors.blue, function()
-            currentPage = currentPage - 1
-        end)
-        table.insert(buttons, prevBtn)
-        drawButton(prevBtn)
-    end
-    
-    if currentPage < totalPages then
-        local nextBtn = createButton(width - 13, height - 1, 12, 1, "Next >", colors.blue, function()
-            currentPage = currentPage + 1
-        end)
-        table.insert(buttons, nextBtn)
-        drawButton(nextBtn)
-    end
-    
-    display.setBackgroundColor(colors.black)
-    display.setTextColor(colors.white)
-    local pageText = string.format("Page %d/%d", currentPage, totalPages)
-    display.setCursorPos(math.floor((width - #pageText) / 2) + 1, height - 1)
-    display.write(pageText)
-    
-    local refreshBtn = createButton(width - 10, 2, 10, 1, "Refresh", colors.green, function() end)
-    table.insert(buttons, refreshBtn)
-    drawButton(refreshBtn)
+    finishCmd(p, msg.ok == true, msg.err)
 end
 
--- Event handlers
-local function handleTouch(x, y)
-    for _, btn in ipairs(buttons) do
-        if isButtonClicked(btn, x, y) then
-            drawButton(btn, true)
-            sleep(0.1)
-            if btn.callback then btn.callback() end
+local function onCmdRelay(msg)
+    if msg.to ~= S.myId then return end
+    local target, id = tonumber(msg.target), msg.id
+    if not target or type(id) ~= "string" then return end
+    if not CMDS[msg.cmd] then
+        send("ack", msg.from, { id = id, ok = false, err = "unknown cmd", target = target })
+        return
+    end
+    if S.pending[id] then S.pending[id].origin = msg.from; return end
+    local d = S.done[id]
+    if d then
+        send("ack", msg.from, { id = id, ok = d.ok, err = d.err, target = d.target })
+        return
+    end
+    M.issueCmd(target, msg.cmd, type(msg.params) == "table" and msg.params or {}, msg.from, id)
+end
+
+-- ---------------------------------------------------------------------------
+-- Home records (server only)
+-- ---------------------------------------------------------------------------
+local function onHomeSave(msg)
+    if type(msg.home) ~= "table" then return end
+    local r = getRec(msg.from, false)
+    S.homes[msg.from] = { home = msg.home, homeFacing = msg.homeFacing, gps = msg.gps == true,
+        label = r and r.st.label, at = now() }
+    saveHomes()
+    local h = msg.home
+    logLine("HOME #" .. msg.from .. " saved " .. tostring(h.x) .. "," .. tostring(h.y) .. "," .. tostring(h.z))
+end
+
+local function onHomeGet(msg)
+    local h = S.homes[msg.from]
+    if h then
+        send("home", msg.from, { found = true, home = h.home, homeFacing = h.homeFacing, gps = h.gps })
+    else
+        send("home", msg.from, { found = false })
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Message entry point
+-- ---------------------------------------------------------------------------
+function M.handleMessage(sender, msg, protocol)
+    if protocol ~= PROTO or type(msg) ~= "table" then return end
+    if msg.v ~= 1 or type(msg.kind) ~= "string" or type(msg.from) ~= "number"
+        or type(msg.boot) ~= "number" or type(msg.seq) ~= "number" then return end
+    local hops = tonumber(msg.hops) or 0
+    if hops > MAX_HOPS or msg.from == S.myId then return end
+    if not markSeen(msg.from .. ":" .. msg.boot .. ":" .. msg.seq) then return end
+
+    if S.mode == "server" and msg.kind ~= "fleet" and hops < MAX_HOPS and S.netOk then
+        local c = copy(msg)
+        c.hops = hops + 1
+        pcall(rednet.broadcast, c, PROTO)
+    end
+
+    local k = msg.kind
+    if k == "status" then onStatus(msg)
+    elseif k == "hello" then onHello(msg)
+    elseif k == "event" then onEvent(msg)
+    elseif k == "ack" then
+        local r = getRec(msg.from, false)
+        if r then r.lastSeen = now() end
+        onAck(msg)
+    elseif S.mode == "server" and k == "home_save" then onHomeSave(msg)
+    elseif S.mode == "server" and k == "home_get" then onHomeGet(msg)
+    elseif S.mode == "server" and k == "cmd_relay" then onCmdRelay(msg)
+    elseif S.mode == "pocket" and k == "fleet" then onFleet(msg)
+    else
+        local r = getRec(msg.from, false)
+        if r then r.lastSeen = now() end
+    end
+    markDirty()
+end
+
+local function sendFleet(t)
+    local arr = {}
+    for id, r in pairs(S.turtles) do
+        local e = copy(r.st)
+        e.id, e.lastSeen, e.alert = id, r.lastSeen, r.alert
+        arr[#arr + 1] = e
+    end
+    table.sort(arr, function(a, b) return a.id < b.id end)
+    local label = os.getComputerLabel and os.getComputerLabel() or nil
+    send("fleet", "all", { turtles = arr, server = { id = S.myId, label = label } })
+    S.lastFleet = t
+end
+
+function M.tick()
+    local t = now()
+    for _, p in pairs(S.pending) do
+        if t >= p.deadline then
+            local maxTries = (S.mode == "server") and (1 + ACK_RETRIES) or (1 + RELAY_RETRIES)
+            if p.tries < maxTries then
+                p.tries = p.tries + 1
+                transmitCmd(p)
+                local r = getRec(p.target, true)
+                if r.cmd then r.cmd.tries = p.tries end
+                markDirty()
+            else
+                finishCmd(p, false, S.mode == "server" and "no ack" or "no reply from server")
+            end
+        end
+    end
+    for id, d in pairs(S.done) do
+        if t - d.at > DONE_KEEP_MS then S.done[id] = nil end
+    end
+    updateAlerts(t)
+    if S.mode == "server" and t - S.lastFleet >= FLEET_EVERY_MS then sendFleet(t) end
+    if t - S.lastDirtyTick >= 1000 then S.lastDirtyTick = t; markDirty() end
+end
+
+-- ---------------------------------------------------------------------------
+-- Formatting
+-- ---------------------------------------------------------------------------
+local function ago(ms)
+    if not ms or ms <= 0 then return "never" end
+    local s = math.floor((now() - ms) / 1000)
+    if s < 0 then s = 0 end
+    if s < 60 then return s .. "s" end
+    if s < 3600 then return math.floor(s / 60) .. "m" end
+    return math.floor(s / 3600) .. "h"
+end
+
+local function compact(n)
+    n = math.floor(n)
+    if n >= 100000 then return math.floor(n / 1000) .. "k" end
+    if n >= 10000 then return math.floor(n / 100) / 10 .. "k" end
+    return tostring(n)
+end
+
+-- returns text, isLow
+local function fuelStr(st, withNeed)
+    local f = st.fuel
+    if f == nil then return "-", false end
+    if type(f) ~= "number" then return "unl", false end
+    local need = tonumber(st.fuelNeeded)
+    local low = need ~= nil and f < need
+    local s = compact(f)
+    if withNeed and need then s = s .. "/" .. compact(need) end
+    return s, low
+end
+
+local function posStr(p)
+    if type(p) ~= "table" then return "-" end
+    return tostring(p.x) .. "," .. tostring(p.y) .. "," .. tostring(p.z)
+end
+
+local function distHome(st)
+    local p, h = st.pos, st.home
+    if type(p) ~= "table" or type(h) ~= "table" then return nil end
+    local ok, d = pcall(function() return math.abs(p.x - h.x) + math.abs(p.y - h.y) + math.abs(p.z - h.z) end)
+    return ok and math.floor(d) or nil
+end
+
+local function phaseColor(ph)
+    if ph == "MINING" or ph == "VEIN" then return colors.lime end
+    if ph == "TO_WORK" or ph == "RETURNING" or ph == "UNLOADING" or ph == "REFUELING" then return colors.lightBlue end
+    if ph == "PAUSED" or ph == "BOOT" or ph == "RECOVER" then return colors.yellow end
+    if ph == "NEEDS_HELP" then return colors.orange end
+    if ph == "ERROR" then return colors.red end
+    if ph == "SILENT" then return colors.gray end
+    return colors.white
+end
+
+local function shownPhase(r)
+    if r.alert == "SILENT" then return "SILENT" end
+    return r.st.phase or "?"
+end
+
+local function cmdLine(r)
+    local c = r.cmd
+    if not c then return nil end
+    if c.state == "pending" then
+        return c.name .. ": waiting (" .. tostring(c.tries or 1) .. ")", colors.yellow
+    elseif c.state == "ok" then
+        return c.name .. ": ok " .. ago(c.at), colors.lime
+    end
+    return c.name .. ": FAILED " .. tostring(c.err or ""), colors.red
+end
+
+local function sortedTurtles()
+    local arr = {}
+    for _, r in pairs(S.turtles) do arr[#arr + 1] = r end
+    table.sort(arr, function(a, b)
+        local aa, ba = a.alert and 0 or 1, b.alert and 0 or 1
+        if aa ~= ba then return aa < ba end
+        local la, lb = labelOf(a):lower(), labelOf(b):lower()
+        if la ~= lb then return la < lb end
+        return a.id < b.id
+    end)
+    return arr
+end
+
+-- ---------------------------------------------------------------------------
+-- UI: one responsive renderer, any number of displays (monitor + terminal)
+-- ---------------------------------------------------------------------------
+function M.newUI(dev, side)
+    local ui = { dev = dev, side = side, view = "list", page = 1, sel = nil, buttons = {},
+        input = "", msg = nil, text = nil, w = 1, h = 1 }
+    ui.color = dev.isColor and dev.isColor() or false
+    return ui
+end
+
+local function mapColor(ui, c, isBg)
+    if ui.color then return c end
+    if isBg then return (c == colors.black) and colors.black or colors.gray end
+    return (c == colors.gray or c == colors.lightGray) and c or colors.white
+end
+
+local function put(ui, x, y, text, fg, bg)
+    if y < 1 or y > ui.h or x > ui.w then return end
+    text = tostring(text)
+    if x < 1 then text = text:sub(2 - x); x = 1 end
+    if #text > ui.w - x + 1 then text = text:sub(1, ui.w - x + 1) end
+    if #text == 0 then return end
+    local d = ui.out
+    d.setTextColor(mapColor(ui, fg or colors.white, false))
+    d.setBackgroundColor(mapColor(ui, bg or colors.black, true))
+    d.setCursorPos(x, y)
+    d.write(text)
+end
+
+local function fillLine(ui, y, bg)
+    put(ui, 1, y, string.rep(" ", ui.w), colors.white, bg)
+end
+
+local function button(ui, x, y, w, label, bg, fn, fg)
+    if w < 1 or y < 1 or y > ui.h then return end
+    local t = trunc(label, w)
+    local left = math.floor((w - #t) / 2)
+    put(ui, x, y, string.rep(" ", left) .. t .. string.rep(" ", w - left - #t), fg or colors.white, bg)
+    ui.buttons[#ui.buttons + 1] = { x1 = x, y1 = y, x2 = x + w - 1, y2 = y, fn = fn }
+end
+
+local function zone(ui, x1, y1, x2, y2, fn)
+    ui.buttons[#ui.buttons + 1] = { x1 = x1, y1 = y1, x2 = x2, y2 = y2, fn = fn }
+end
+
+local function header(ui, title, right, backable)
+    fillLine(ui, 1, colors.blue)
+    local x = 1
+    if backable then
+        button(ui, 1, 1, 3, "<", colors.gray, function() ui.view = (ui.view == "detail") and "list" or "detail" end)
+        x = 5
+    end
+    right = right or ""
+    local room = ui.w - x + 1 - (#right > 0 and (#right + 1) or 0)
+    if room < 1 then right = ""; room = ui.w - x + 1 end
+    put(ui, x, 1, trunc(title, room), colors.white, colors.blue)
+    if #right > 0 then put(ui, ui.w - #right + 1, 1, right, colors.yellow, colors.blue) end
+end
+
+local function gridCols(ui, maxCols)
+    return math.max(1, math.min(maxCols, math.floor((ui.w + 1) / 12)))
+end
+
+-- Lay buttons out in a grid at the bottom. defs = {{label, bg, fn, fg}, ...}.
+-- reserve = rows wanted above the grid (besides the header). Returns top row used.
+local function buttonGrid(ui, defs, maxCols, reserve)
+    local bottom = ui.h
+    local cols = gridCols(ui, maxCols)
+    if ui.h > 1 then cols = math.min(#defs, math.max(cols, math.ceil(#defs / (ui.h - 1)))) end
+    local rows = math.ceil(#defs / cols)
+    local bw = math.max(1, math.floor((ui.w - (cols + 1)) / cols))
+    if ui.w < cols + 2 then bw = math.max(1, math.floor(ui.w / cols)) end
+    local gap = (bottom - 1 - (reserve or 0) >= rows * 2 - 1) and 1 or 0
+    local top = bottom - (rows * (1 + gap) - gap) + 1
+    for i, d in ipairs(defs) do
+        local c = (i - 1) % cols
+        local rr = math.floor((i - 1) / cols)
+        local x = 2 + c * (bw + 1)
+        if ui.w < cols + 2 then x = 1 + c * bw end
+        button(ui, x, top + rr * (1 + gap), bw, d[1], d[2], d[3], d[4])
+    end
+    return top
+end
+
+local function currentRec(ui)
+    return ui.sel and S.turtles[ui.sel] or nil
+end
+
+local function doCmd(ui, cmd, params)
+    if ui.sel then M.issueCmd(ui.sel, cmd, params) end
+    ui.view = "detail"
+end
+
+-- List view ---------------------------------------------------------------
+local function drawRow(ui, r, y, rowsPer)
+    local w, st = ui.w, r.st
+    local bg = r.alert and colors.red or colors.black
+    for k = 0, rowsPer - 1 do fillLine(ui, y + k, bg) end
+    local ph = shownPhase(r)
+    local phFg = r.alert and colors.yellow or phaseColor(ph)
+    local function lowFg(low) return low and (r.alert and colors.yellow or colors.red) or colors.white end
+    if w >= 40 then
+        local wide = w >= 60
+        local nw, pw, fw = wide and 16 or 13, wide and 11 or 7, wide and 12 or 6
+        local fuel, low = fuelStr(st, wide)
+        local d = distHome(st)
+        local x = 1
+        put(ui, x, y, pad(labelOf(r), nw), colors.white, bg); x = x + nw + 1
+        put(ui, x, y, pad(wide and ph or (PHASE_SHORT[ph] or ph), pw), phFg, bg); x = x + pw + 1
+        put(ui, x, y, pad(fuel, fw), lowFg(low), bg); x = x + fw + 1
+        put(ui, x, y, pad(d and ("h" .. d) or "h-", 6), colors.white, bg); x = x + 7
+        put(ui, x, y, pad(ago(r.lastSeen), 5), colors.lightGray, bg); x = x + 6
+        if rowsPer == 1 and x <= w then
+            put(ui, x, y, trunc(st.reason or "", w - x + 1), colors.lightGray, bg)
+        end
+    else
+        local fuel, low = fuelStr(st, false)
+        local pw, fw = 6, 5
+        local nw = w - pw - fw - 2
+        if nw < 3 then fw = 0; nw = w - pw - 1 end
+        put(ui, 1, y, pad(labelOf(r), nw), colors.white, bg)
+        put(ui, nw + 2, y, pad(PHASE_SHORT[ph] or ph, pw), phFg, bg)
+        if fw > 0 then put(ui, w - fw + 1, y, lpad(fuel, fw), lowFg(low), bg) end
+    end
+    if rowsPer == 2 then
+        local t, fg = st.reason or st.lastError, colors.lightGray
+        if not t then t, fg = cmdLine(r) end
+        if not t then t = "#" .. r.id .. " " .. posStr(st.pos) end
+        put(ui, 3, y + 1, trunc(t, w - 2), r.alert and colors.white or (fg or colors.lightGray), bg)
+    end
+    zone(ui, 1, y, w, y + rowsPer - 1, function() ui.sel = r.id; ui.view = "detail" end)
+end
+
+local function renderList(ui)
+    local w, h = ui.w, ui.h
+    local arr = sortedTurtles()
+    local nAlert = 0
+    for _, r in ipairs(arr) do if r.alert then nAlert = nAlert + 1 end end
+    local title = S.mode == "server" and ("TMINER srv#" .. S.myId) or "TMINER pocket"
+    header(ui, title, #arr .. (nAlert > 0 and (" " .. nAlert .. "!") or ""), false)
+    local bodyTop, bodyBot = 2, h - 1
+    local bodyH = bodyBot - bodyTop + 1
+    if bodyH < 1 then return end
+    local rowsPer = (w >= 30 and bodyH >= #arr * 2) and 2 or 1
+    local perPage = math.max(1, math.floor(bodyH / rowsPer))
+    local pages = math.max(1, math.ceil(#arr / perPage))
+    if ui.page > pages then ui.page = pages end
+    if ui.page < 1 then ui.page = 1 end
+    if #arr == 0 then
+        put(ui, 1, 2, trunc(S.mode == "pocket" and "Waiting for server..." or "No turtles heard yet", w), colors.lightGray)
+    end
+    for i = 1, perPage do
+        local r = arr[(ui.page - 1) * perPage + i]
+        if not r then break end
+        drawRow(ui, r, bodyTop + (i - 1) * rowsPer, rowsPer)
+    end
+    -- footer
+    fillLine(ui, h, colors.gray)
+    local x = 1
+    if pages > 1 then
+        button(ui, 1, h, 3, "<", colors.blue, function() ui.page = math.max(1, ui.page - 1) end)
+        button(ui, 5, h, 3, ">", colors.blue, function() ui.page = math.min(pages, ui.page + 1) end)
+        x = 9
+    end
+    local info
+    if S.mode == "pocket" then
+        if S.fleetFrom and now() - S.fleetAt < 15000 then
+            info = "srv#" .. S.fleetFrom .. " " .. ago(S.fleetAt)
+        else
+            info = "no server"
+        end
+    else
+        info = S.netOk and "relay on" or "NO MODEM"
+    end
+    if pages > 1 then info = ui.page .. "/" .. pages .. " " .. info end
+    local logW = (w - x + 1 >= 10) and 5 or 0
+    put(ui, x, h, trunc(info, w - x + 1 - (logW > 0 and logW + 1 or 0)), colors.white, colors.gray)
+    if logW > 0 then button(ui, w - logW + 1, h, logW, "LOG", colors.blue, function() ui.view = "log" end) end
+end
+
+-- Detail view ---------------------------------------------------------------
+local function detailLines(r, wide)
+    local st, L = r.st, {}
+    local function add(k, v, fg) L[#L + 1] = { k, tostring(v), fg } end
+    local ph = shownPhase(r)
+    add("Phase", ph .. (r.alert and r.alert ~= ph and (" " .. r.alert) or ""), phaseColor(ph))
+    add("Why", st.reason or "-", st.reason and colors.orange or nil)
+    local need = tonumber(st.fuelNeeded)
+    local fuelTxt, low = fuelStr(st, false)
+    add("Fuel", fuelTxt .. (need and (" need " .. compact(need)) or ""), low and colors.red or nil)
+    local d = distHome(st)
+    add("Home", (d and (d .. " blk") or "-") .. (wide and type(st.home) == "table" and (" @" .. posStr(st.home)) or ""))
+    add("Pos", posStr(st.pos) .. (st.facing and (" f" .. tostring(st.facing)) or ""))
+    local j = st.job
+    if type(j) == "table" then
+        add("Job", "c" .. tostring(j.corridor) .. " b" .. tostring(j.branch) .. " " .. tostring(j.side or "")
+            .. " s" .. tostring(j.step))
+    else
+        add("Job", "-")
+    end
+    local s = type(st.stats) == "table" and st.stats or {}
+    add("Ores", tostring(s.ores or "-") .. (wide and ("  blocks " .. tostring(s.blocks or "-") .. "  trips "
+        .. tostring(s.trips or "-")) or (" trips " .. tostring(s.trips or "-"))))
+    add("Seen", ago(r.lastSeen) .. " ago", r.alert == "SILENT" and colors.red or nil)
+    add("GPS", (st.gps == true and "yes" or (st.gps == false and "no" or "-")) .. "  v" .. tostring(st.version or "?"))
+    local cfg = type(st.cfg) == "table" and st.cfg or {}
+    add("Cfg", "Y " .. tostring(cfg.targetY or "-") .. " focus " .. tostring(cfg.focus or "-"))
+    add("Error", st.lastError or "-", st.lastError and colors.red or nil)
+    local ct, cfg2 = cmdLine(r)
+    add("Cmd", ct or "-", cfg2)
+    for _, e in ipairs(r.events) do
+        add("Ev", ago(e.at) .. " " .. tostring(e.text),
+            e.level == "error" and colors.red or (e.level == "warn" and colors.orange or colors.lightGray))
+    end
+    return L
+end
+
+local function cmdDefs(ui, r)
+    return {
+        { "RETURN HOME", colors.orange, function() doCmd(ui, "RETURN_HOME") end },
+        { "PAUSE", colors.yellow, function() doCmd(ui, "PAUSE") end, colors.black },
+        { "RESUME", colors.green, function() doCmd(ui, "RESUME") end },
+        { "STATUS", colors.blue, function() doCmd(ui, "REQUEST_STATUS") end },
+        { "TARGET Y", colors.blue, function()
+            local c = type(r.st.cfg) == "table" and r.st.cfg.targetY
+            ui.input = c and tostring(c) or ""; ui.msg = nil; ui.view = "num"
+        end },
+        { "FOCUS ORE", colors.blue, function() ui.view = "focus" end },
+        { "RESET HOME", colors.red, function() ui.view = "confirm" end },
+        { "UPDATE", colors.purple, function() doCmd(ui, "UPDATE") end },
+        { "BACK", colors.gray, function() ui.view = "list" end },
+    }
+end
+
+local CORE_LINES = 12
+
+local function renderDetail(ui)
+    local r = currentRec(ui)
+    if not r then ui.view = "list"; return renderList(ui) end
+    header(ui, labelOf(r) .. " #" .. r.id, nil, true)
+    local defs = cmdDefs(ui, r)
+    local lines = detailLines(r, ui.w >= 40)
+    local gridRows = math.ceil(#defs / gridCols(ui, 3))
+    local lastInfo
+    if ui.h - 2 - gridRows < math.min(CORE_LINES, 6) then
+        -- small screen: info on this page, commands on their own page
+        local half = math.max(1, math.floor((ui.w - 3) / 2))
+        button(ui, 2, ui.h, half, "BACK", colors.gray, function() ui.view = "list" end)
+        button(ui, 3 + half, ui.h, half, "CMDS", colors.blue, function() ui.view = "cmds" end)
+        lastInfo = ui.h - 1
+    else
+        local top = buttonGrid(ui, defs, 3, #lines + 1)
+        lastInfo = top - 2
+        if lastInfo < 2 then lastInfo = top - 1 end
+    end
+    local kw = 7
+    for i, l in ipairs(lines) do
+        local y = 1 + i
+        if y > lastInfo then break end
+        put(ui, 1, y, pad(l[1], kw - 1), colors.lightGray)
+        put(ui, kw, y, trunc(l[2], ui.w - kw + 1), l[3] or colors.white)
+        local full = l[1] .. ": " .. l[2]
+        zone(ui, 1, y, ui.w, y, function() ui.text = full; ui.view = "text" end)
+    end
+end
+
+local function renderCmds(ui)
+    local r = currentRec(ui)
+    if not r then ui.view = "list"; return renderList(ui) end
+    header(ui, "Cmd " .. labelOf(r) .. " #" .. r.id, nil, true)
+    local defs = cmdDefs(ui, r)
+    defs[#defs][3] = function() ui.view = "detail" end
+    buttonGrid(ui, defs, 3)
+end
+
+-- Numeric entry (target Y) --------------------------------------------------
+local function numOk(ui)
+    local v = tonumber(ui.input)
+    if not v or v ~= math.floor(v) or v < -64 or v > 320 then
+        ui.msg = "Need integer -64..320"
+        return
+    end
+    doCmd(ui, "SET", { key = "TARGET_Y", value = v })
+end
+
+local function numKey(ui, ch)
+    if ch == "DEL" then ui.input = ui.input:sub(1, -2)
+    elseif ch == "-" then
+        if ui.input:sub(1, 1) == "-" then ui.input = ui.input:sub(2) else ui.input = "-" .. ui.input end
+    elseif #ui.input < 4 then ui.input = ui.input .. ch end
+    ui.msg = nil
+end
+
+local function renderNum(ui)
+    local r = currentRec(ui)
+    if not r then ui.view = "list"; return renderList(ui) end
+    header(ui, "Target Y #" .. r.id, nil, true)
+    put(ui, 1, 2, "Y = ", colors.lightGray)
+    put(ui, 5, 2, ui.input .. "_", colors.yellow)
+    if ui.msg then put(ui, 1, 3, trunc(ui.msg, ui.w), colors.red) end
+    local defs = {}
+    for _, k in ipairs({ "7", "8", "9", "DEL", "4", "5", "6", "-", "1", "2", "3", "0" }) do
+        defs[#defs + 1] = { k, colors.gray, function() numKey(ui, k) end }
+    end
+    defs[#defs + 1] = { "CANCEL", colors.red, function() ui.view = "detail" end }
+    defs[#defs + 1] = { "", colors.black, function() end }
+    defs[#defs + 1] = { "", colors.black, function() end }
+    defs[#defs + 1] = { "OK", colors.green, function() numOk(ui) end }
+    -- 4 columns regardless of width (keys are short)
+    local cols, rows = 4, 4
+    local bw = math.max(1, math.floor((ui.w - 5) / 4))
+    local gap = (ui.h - 4 >= rows * 2) and 1 or 0
+    local top = math.max(4, ui.h - (rows * (1 + gap) - gap) + 1)
+    for i, d in ipairs(defs) do
+        local c, rr = (i - 1) % cols, math.floor((i - 1) / cols)
+        if d[1] ~= "" then button(ui, 2 + c * (bw + 1), top + rr * (1 + gap), bw, d[1], d[2], d[3]) end
+    end
+end
+
+-- Focus ore picker ---------------------------------------------------------
+local function renderFocus(ui)
+    local r = currentRec(ui)
+    if not r then ui.view = "list"; return renderList(ui) end
+    header(ui, "Focus ore #" .. r.id, nil, true)
+    local cur = type(r.st.cfg) == "table" and r.st.cfg.focus
+    local defs = {}
+    for _, f in ipairs(FOCUS_LIST) do
+        defs[#defs + 1] = { f, f == cur and colors.green or colors.blue,
+            function() doCmd(ui, "SET", { key = "FOCUS", value = f }) end }
+    end
+    defs[#defs + 1] = { "CANCEL", colors.red, function() ui.view = "detail" end }
+    buttonGrid(ui, defs, 3)
+end
+
+-- Confirm RESET_HOME ---------------------------------------------------------
+local function wrap(text, w)
+    local out = {}
+    if w < 1 then return out end
+    for para in (tostring(text) .. "\n"):gmatch("(.-)\n") do
+        while #para > w do
+            local cut = para:sub(1, w):match("^.*() ") or (w + 1)
+            if cut <= 1 then cut = w + 1 end
+            out[#out + 1] = para:sub(1, cut - 1)
+            para = para:sub(cut):gsub("^ ", "")
+        end
+        out[#out + 1] = para
+    end
+    return out
+end
+
+local function renderConfirm(ui)
+    local r = currentRec(ui)
+    if not r then ui.view = "list"; return renderList(ui) end
+    header(ui, "Reset home?", nil, true)
+    local txt = "Set the home of " .. nameOf(r) .. " to where it is NOW (" .. posStr(r.st.pos)
+        .. ")? Only do this when it sits at its home chest."
+    local lines = wrap(txt, ui.w)
+    for i, l in ipairs(lines) do
+        if 1 + i > ui.h - 2 then break end
+        put(ui, 1, 1 + i, l, colors.white)
+    end
+    local half = math.max(1, math.floor((ui.w - 3) / 2))
+    button(ui, 2, ui.h, half, "YES RESET", colors.red, function() doCmd(ui, "RESET_HOME", {}) end)
+    button(ui, 3 + half, ui.h, half, "NO", colors.gray, function() ui.view = "detail" end)
+end
+
+-- Text view (full field / log) ----------------------------------------------
+local function renderText(ui, title, lines, back)
+    fillLine(ui, 1, colors.blue)
+    button(ui, 1, 1, 3, "<", colors.gray, back)
+    put(ui, 5, 1, trunc(title, ui.w - 4), colors.white, colors.blue)
+    local avail = ui.h - 1
+    local first = math.max(1, #lines - avail + 1)
+    for i = first, #lines do
+        put(ui, 1, 2 + i - first, trunc(lines[i], ui.w), colors.white)
+    end
+    zone(ui, 1, 2, ui.w, ui.h, back)
+end
+
+function M.render(ui)
+    local w, h = ui.dev.getSize()
+    ui.w, ui.h = w, h
+    if window and not ui.win then ui.win = window.create(ui.dev, 1, 1, w, h, false) end
+    if ui.win then
+        local ww, wh = ui.win.getSize()
+        if ww ~= w or wh ~= h then ui.win.reposition(1, 1, w, h) end
+        ui.win.setVisible(false)
+        ui.out = ui.win
+    else
+        ui.out = ui.dev
+    end
+    ui.buttons = {}
+    ui.out.setBackgroundColor(colors.black)
+    ui.out.clear()
+    if ui.view == "detail" then renderDetail(ui)
+    elseif ui.view == "cmds" then renderCmds(ui)
+    elseif ui.view == "num" then renderNum(ui)
+    elseif ui.view == "focus" then renderFocus(ui)
+    elseif ui.view == "confirm" then renderConfirm(ui)
+    elseif ui.view == "text" then
+        renderText(ui, "Detail", wrap(ui.text or "", w), function() ui.view = "detail" end)
+    elseif ui.view == "log" then
+        local lines = {}
+        for _, l in ipairs(S.log) do for _, p in ipairs(wrap(l, w)) do lines[#lines + 1] = p end end
+        renderText(ui, "Event log", lines, function() ui.view = "list" end)
+    else
+        ui.view = "list"
+        renderList(ui)
+    end
+    if ui.win then ui.win.setVisible(true) end
+end
+
+function M.click(ui, x, y)
+    for i = #ui.buttons, 1, -1 do
+        local b = ui.buttons[i]
+        if x >= b.x1 and x <= b.x2 and y >= b.y1 and y <= b.y2 then
+            b.fn()
+            M.render(ui)
             return true
         end
     end
     return false
 end
 
-local function checkTimeouts()
-    local now = os.epoch("utc")
-    for _, turtle in pairs(turtles) do
-        if (now - turtle.lastSeen) / 1000 > TIMEOUT then
-            turtle.connected = false
-        end
+local function renderAll()
+    S.dirtyQueued = false
+    for _, ui in ipairs(S.uis) do pcall(M.render, ui) end
+end
+
+-- ---------------------------------------------------------------------------
+-- Init and loops
+-- ---------------------------------------------------------------------------
+local function findMonitor(sideArg)
+    if sideArg == "none" then return nil end
+    if sideArg and sideArg ~= "auto" and peripheral.getType(sideArg) == "monitor" then
+        return peripheral.wrap(sideArg), sideArg
+    end
+    for _, n in ipairs(peripheral.getNames()) do
+        if peripheral.getType(n) == "monitor" then return peripheral.wrap(n), n end
+    end
+    return nil
+end
+
+local function attachMonitor(cfg)
+    local mon, side = findMonitor(cfg.monitor)
+    if not mon then return end
+    pcall(mon.setTextScale, cfg.scale)
+    table.insert(S.uis, 1, M.newUI(mon, side))
+end
+
+function M.init(opts)
+    opts = opts or {}
+    S.mode = opts.mode or (pocket ~= nil and "pocket" or "server")
+    S.myId = os.getComputerID()
+    S.boot = now()
+    S.cfg = { monitor = opts.monitor or "auto", scale = opts.scale or 0.5 }
+    openModems()
+    if S.mode == "server" then
+        S.homes = loadHomes()
+        loadLog()
+        logLine("server #" .. S.myId .. " started" .. (S.netOk and "" or " (NO MODEM)"))
+    else
+        logLine("pocket #" .. S.myId .. " started")
+    end
+    S.uis = {}
+    if not opts.noDisplay then
+        if S.mode == "server" then attachMonitor(S.cfg) end
+        S.uis[#S.uis + 1] = M.newUI(term.current(), nil)
     end
 end
 
--- =============================================================================
--- handleBridgePacket definition (forward-declared above)
--- Called when we receive a BRIDGE_PROTOCOL packet from a wired peer server.
--- =============================================================================
-handleBridgePacket = function(senderId, bridgeMsg)
-    if type(bridgeMsg) ~= "table" then return false end
-    if bridgeMsg.type ~= "BRIDGE_PACKET" then return false end
-
-    -- Dedup: ignore if we already processed this bridge packet
-    local bid = bridgeMsg.bridgeId
-    if not bid then return false end
-    if recentlyBridged[bid] then return false end
-    recentlyBridged[bid] = true
-    cleanBridgeCache()
-
-    -- Track the peer server
-    local peerId = bridgeMsg.originServerId or senderId
-    bridgePeers[peerId] = { lastSeen = os.epoch("utc") }
-
-    -- Process the inner payload as if we received it directly from the turtle
-    local proto  = bridgeMsg.innerProtocol
-    local origId = bridgeMsg.originalSenderId
-    local payload = bridgeMsg.payload
-    if not (proto and origId and payload) then return false end
-
-    if proto == PROTOCOL then
-        if payload.type ~= "TEST" then
-            updateTurtle(origId, payload)
-        end
-        relayMessage(origId, payload, PROTOCOL)
-
-    elseif proto == MINED_PROTOCOL then
-        pcall(handleMinedMessage, origId, payload)
-        relayMessage(origId, payload, MINED_PROTOCOL)
-
-    elseif proto == POSITION_PROTOCOL then
-        pcall(handlePositionMessage, origId, payload)
-        relayMessage(origId, payload, POSITION_PROTOCOL)
-
-    elseif proto == COMMAND_PROTOCOL then
-        -- Re-broadcast commands from peers so our local turtles receive them too
-        if wirelessModemName then
-            pcall(function()
-                rednet.broadcast(payload, COMMAND_PROTOCOL)
-            end)
-        end
-    end
-
-    -- Re-bridge to any further wired peers (hop through this server's wired modem).
-    -- The dedup cache prevents infinite loops.
-    bridgeToWired(proto, origId, payload, bridgeMsg.originServerId)
-
-    return true
-end
-
--- Main loops
-local function listenForMessages()
+local function netLoop()
     while true do
-        local senderId, message = rednet.receive(PROTOCOL, 1)
-        if senderId then
-            -- Ignore our own bridged re-broadcasts coming back
-            if senderId ~= os.getComputerID() then
-                if message.type == "TEST" then
-                    rednet.send(senderId, {type = "ACK", id = os.getComputerID()}, PROTOCOL)
-                else
-                    updateTurtle(senderId, message)
-                end
-                -- Relay wirelessly AND forward to wired peers
-                relayMessage(senderId, message, PROTOCOL)
-                bridgeToWired(PROTOCOL, senderId, message)
-            end
+        local _, sender, msg, protocol = os.pullEvent("rednet_message")
+        M.handleMessage(sender, msg, protocol)
+    end
+end
+
+local function tickLoop()
+    local timer = os.startTimer(TICK)
+    while true do
+        local _, id = os.pullEvent("timer")
+        if id == timer then
+            M.tick()
+            timer = os.startTimer(TICK)
         end
     end
 end
 
-local function listenForMinedMessages()
+local function uiLoop()
+    renderAll()
     while true do
-        local senderId, message = rednet.receive(MINED_PROTOCOL, 1)
-        if senderId and type(message) == "table" then
-            if senderId ~= os.getComputerID() then
-                pcall(handleMinedMessage, senderId, message)
-                relayMessage(senderId, message, MINED_PROTOCOL)
-                bridgeToWired(MINED_PROTOCOL, senderId, message)
-            end
-        end
-    end
-end
-
-local function listenForPositionMessages()
-    while true do
-        local senderId, message = rednet.receive(POSITION_PROTOCOL, 1)
-        if senderId and type(message) == "table" then
-            if senderId ~= os.getComputerID() then
-                pcall(handlePositionMessage, senderId, message)
-                relayMessage(senderId, message, POSITION_PROTOCOL)
-                bridgeToWired(POSITION_PROTOCOL, senderId, message)
-            end
-        end
-    end
-end
-
--- Listens for packets from peer servers on the wired bridge network
-local function listenForBridgeMessages()
-    if not wiredModemName then
-        -- No wired modem - this coroutine just sleeps forever so parallel still works
-        while true do sleep(60) end
-    end
-    while true do
-        local senderId, message = rednet.receive(BRIDGE_PROTOCOL, 1)
-        if senderId and senderId ~= os.getComputerID() then
-            pcall(handleBridgePacket, senderId, message)
-        end
-    end
-end
-
-local function handleInput()
-    while true do
-        local event, p1, p2, p3 = os.pullEvent()
-        
-        if event == "monitor_touch" or event == "mouse_click" then
-            handleTouch(p2, p3)
-        elseif event == "char" and inputMode == "targetY" then
-            if p1:match("[0-9]") or (p1 == "-" and #commandInput == 0) then
-                commandInput = commandInput .. p1
-            end
-        elseif event == "key" and inputMode == "targetY" then
-            if p1 == keys.backspace and #commandInput > 0 then
-                commandInput = commandInput:sub(1, -2)
-            elseif p1 == keys.enter then
-                for _, btn in ipairs(buttons) do
-                    if btn.text == "OK" and btn.callback then
-                        btn.callback()
-                        break
-                    end
+        local ev = { os.pullEvent() }
+        local e = ev[1]
+        if e == "tminer_redraw" then
+            renderAll()
+        elseif e == "monitor_touch" or e == "mouse_click" then
+            for _, ui in ipairs(S.uis) do
+                if (e == "monitor_touch" and ui.side == ev[2]) or (e == "mouse_click" and ui.side == nil) then
+                    M.click(ui, ev[3], ev[4])
                 end
             end
+        elseif e == "char" or e == "key" then
+            for _, ui in ipairs(S.uis) do
+                if ui.side == nil and ui.view == "num" then
+                    if e == "char" and ev[2]:match("^[0-9%-]$") then numKey(ui, ev[2])
+                    elseif e == "key" and ev[2] == keys.backspace then numKey(ui, "DEL")
+                    elseif e == "key" and (ev[2] == keys.enter or ev[2] == keys.numPadEnter) then numOk(ui) end
+                    M.render(ui)
+                end
+            end
+        elseif e == "monitor_resize" or e == "term_resize" then
+            renderAll()
+        elseif e == "peripheral" then
+            if peripheral.getType(ev[2]) == "modem" then openModems() end
+            if peripheral.getType(ev[2]) == "monitor" and S.mode == "server"
+                and not (S.uis[1] and S.uis[1].side) then
+                attachMonitor(S.cfg)
+            end
+            renderAll()
+        elseif e == "peripheral_detach" then
+            for i = #S.uis, 1, -1 do
+                if S.uis[i].side == ev[2] then table.remove(S.uis, i) end
+            end
+            openModems()
+            renderAll()
         end
     end
 end
 
-local function updateGUI()
-    while true do
-        checkTimeouts()
-        if showCommandMenu then
-            drawCommandMenu()
-        else
-            drawMainScreen()
-        end
-        sleep(REFRESH_RATE)
-    end
+function M.run()
+    parallel.waitForAny(netLoop, tickLoop, uiLoop)
 end
 
-local function autosaveMinedDb()
-    while true do
-        if minedDirty then
-            saveDb("mined_areas.db", minedBlocks)
-            minedDirty = false
-        end
-        sleep(10)
-    end
-end
-
--- Startup
-print("=== Turtle Command Center (Touchscreen) ===")
-if not pcall(initModem) then
-    printError("ERROR: Modem initialization failed")
-    return
-end
-
-minedBlocks = loadDb("mined_areas.db")
-turtlePositions = loadDb("turtle_positions.db")
-print("Databases loaded")
-sleep(1)
-
-parallel.waitForAny(
-    listenForMessages,
-    listenForMinedMessages,
-    listenForPositionMessages,
-    listenForBridgeMessages,
-    updateGUI,
-    autosaveMinedDb,
-    handleInput
-)
-
-display.setBackgroundColor(colors.black)
-display.setTextColor(colors.white)
-display.clear()
-display.setCursorPos(1, 1)
-display.write("System stopped.")
-rednet.close()
+local args = { ... }
+if args[1] == "--lib" then return M end
+M.init({ monitor = args[1], scale = tonumber(args[2]) })
+M.run()
