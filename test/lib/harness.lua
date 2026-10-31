@@ -326,6 +326,12 @@ function H.minerSetup(opts)
         ctx.fuelChestPos = { x = home.x, y = home.y + 1, z = home.z }
         w:chest(ctx.fuelChestPos.x, ctx.fuelChestPos.y, ctx.fuelChestPos.z, opts.fuelChest)
     end
+    if opts.gps and not opts.enclosedHome then
+        -- GPS facing calibration (forward, else back, else up+forward) needs room: open
+        -- the two cells above home and the one in front of that, like a surface base.
+        w:set(home.x, home.y + 1, home.z, "air")
+        w:set(home.x + F.x, home.y + 1, home.z + F.z, "air")
+    end
     local t = sim.turtle(w, { id = opts.id or 1, label = opts.label or ("T" .. (opts.id or 1)), pos = home,
         facing = facing, fuel = opts.fuel or 5000, gps = opts.gps, inventory = opts.inventory })
     t.computer.label = opts.label or ("T" .. t.id)
@@ -577,6 +583,78 @@ function H.setGrid(ctx, f, r, y, name)
     local p = H.gridToWorld(ctx, f, r, y)
     ctx.w:set(p.x, p.y, p.z, name)
     return p
+end
+
+-- miner/config.lua DEFAULTS, loaded on the host (no CC APIs needed for that table)
+function H.configDefaults()
+    local path = (os.getenv("SIM_MINER_DIR") or (ROOT .. "/miner")) .. "/config.lua"
+    local env = setmetatable({}, { __index = _G })
+    local fn = assert(loadfile(path, "t", env))
+    local ok, cfg = pcall(fn)
+    H.check(ok and type(cfg) == "table" and cfg.DEFAULTS, "could not load miner/config.lua: %s", tostring(cfg))
+    return cfg.DEFAULTS
+end
+
+function H.inList(list, name)
+    for _, v in ipairs(list or {}) do if v == name then return true end end
+    return false
+end
+
+-- Is home-frame cell (f, r) on the mining grid of INTERFACES.md (shaft, spine, mains, branches)?
+function H.onGrid(ctx, f, r)
+    local cfg = ctx.cfg
+    local BL, BS = cfg.BRANCH_LENGTH, cfg.BRANCH_SPACING
+    local W = 2 * BL + BS
+    if f == 0 and r == 0 then return true end
+    if f == 1 and r >= 0 then return true end
+    if f < 1 then return false end
+    local c = math.floor((r + W / 2) / W)
+    if c < 0 then return false end
+    if r == c * W then return true end
+    if math.abs(r - c * W) <= BL and (f - 1) % BS == 0 and f > 1 then return true end
+    return false
+end
+
+-- Digs that happened off the grid (vein excursions), grouped into contiguous runs.
+function H.excursions(ctx)
+    local runs, cur = {}, nil
+    for _, d in ipairs(H.dugGrid(ctx)) do
+        if H.onGrid(ctx, d.f, d.r) then
+            if cur then runs[#runs + 1] = cur; cur = nil end
+        else
+            cur = cur or {}
+            cur[#cur + 1] = d
+        end
+    end
+    if cur then runs[#runs + 1] = cur end
+    return runs
+end
+
+function H.droppedAwayFromHome(ctx, pred)
+    local n = 0
+    for _, d in ipairs(ctx.w.dropped) do
+        if pred(d.name) and H.dist(d, ctx.home) > 2 then n = n + d.count end
+    end
+    return n
+end
+
+function H.notNeedsHelp(ctx)
+    local nh = ctx.srv.phaseSeen(ctx.t.id, "NEEDS_HELP")
+    H.check(not nh, "went NEEDS_HELP: %s", tostring(nh and nh.reason))
+end
+
+-- Model "the turtle has already mined a lot": the first time it is at least `dist`
+-- blocks from home, fill empty slots with `name` until only `free` slots are left.
+-- (Pre-filling at boot doesn't work: the miner unloads at home first.)
+function H.fillWhenAway(ctx, name, free, dist)
+    local done = false
+    sim.addHook(ctx.t, function()
+        if done or H.dist(ctx.t.pos, ctx.home) < (dist or 6) then return end
+        done = true
+        local empty = {}
+        for s = 1, 16 do if not ctx.t.inv[s] then empty[#empty + 1] = s end end
+        for i = 1, #empty - free do ctx.t.inv[empty[i]] = { name = name, count = 64 } end
+    end)
 end
 
 return H
