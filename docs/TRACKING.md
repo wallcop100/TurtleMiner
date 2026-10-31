@@ -57,14 +57,14 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | # | Scenario | Status | Last result |
 |---|----------|--------|-------------|
 | 1 | Fresh start, 2 corridors, unload, no prompts | DONE | PASS |
-| 2 | Crash after each op type, reboot, position + facing correct (GPS / no GPS) | FAIL | FAIL: after crash, recovery ignores journal after last S line → wrong home → 'no storage at home' |
+| 2 | Crash after each op type, reboot, position + facing correct (GPS / no GPS) | DONE | PASS (boot no longer saves stale snapshot before recover) |
 | 3 | 20-high gravel column not treated as stuck | DONE | PASS |
 | 4 | Bedrock → NEEDS_HELP, no loop | DONE | PASS |
 | 5 | Low fuel → return, refuel, continue, never strands | DONE | PASS (surplus fuel → fuel chest; single chest still gets surplus beyond FUEL_TARGET) |
 | 6 | Chest full → NEEDS_HELP, resumes when emptied | DONE | PASS |
 | 7 | Commands addressed correctly; RETURN_HOME mid-vein | DONE | PASS |
 | 8 | Corridors never overlap | DONE | PASS (r=0,11,22) |
-| 9 | World rollback after crash (state ahead of world by N moves) recovered via fuel journal | FAIL | FAIL: full miner reports wrong pos after world rollback (nav-only cases pass) |
+| 9 | World rollback after crash (state ahead of world by N moves) recovered via fuel journal | DONE | PASS (same root cause as 2) |
 | 10 | Pocket layout renders in 26x20 without overflow | DONE | PASS |
 | 11 | Deepslate transition: stone/deepslate variants one vein, cobbled_deepslate is trash | DONE | PASS |
 | 12 | Jagged bedrock (-64..-60): downward vein stops at bedrock, run continues | DONE | PASS |
@@ -75,7 +75,7 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 17 | Large iron/copper ore veins: raw_*_block is ore, VEIN_MAX stops cleanly, filler is trash | DONE | PASS (raw_*_block = ore, family 'iron' etc.) |
 | 18 | 1.18 ore heights: FOCUS diamond at -58; SET TARGET_Y 16 + iron mid-job | DONE | PASS |
 | 19 | Cliffs: home at Y 150, 208-block shaft, exact fuel, never strands; negative HOME_Y | FAIL | FAIL: asks 460 fuel to leave, then wants 464 |
-| 20 | Cave mobs (leave vs never leave → timeout NEEDS_HELP) and buried ore found | FAIL | FAIL: nav.forward hangs on a permanent mob (no timeout) |
+| 20 | Cave mobs (leave vs never leave → timeout NEEDS_HELP) and buried ore found | DONE | PASS (attacks no longer reset stuck timer) |
 
 ## In-game acceptance (you)
 
@@ -108,3 +108,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | First full run with all real modules: 16/21 pass (incl. selftest). Failing: 2, 5, 9, 19, 20. Launching fix agents. |
 | 2026-10-31 | coordinator | Fix agents (2/9/20 recovery+mob, 5/15/17 coal+lists, 19 fuel) hit the usage limit before committing anything; resumed. |
 | 2026-10-31 | coordinator | Coal/lists fix merged (8d83b90): 17/21 pass. Remaining: 2, 9, 19, 20. |
+| 2026-10-31 | coordinator | Recovery/mob fix merged (e7951b3). Root cause of 2/9: setPhase('RECOVER') saved a stale snapshot over the journal before nav.recover ran. |
