@@ -25,7 +25,7 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | WP-B Inv + Mine | agent 3 | DOING | agent worktree | | |
 | WP-C Net + Main | agent 4 | DOING | agent worktree | | |
 | WP-D Monitor | agent 5 | DOING | agent worktree | | |
-| WP-E Install / Update / Cleanup | agent 6 | DOING | agent worktree | | |
+| WP-E Install / Update / Cleanup | agent 6 | DONE | merged | 88aa268 (cherry-picked) | 37 throwaway tests pass. Deviations: updater called via require().run not shell.run; seq starts random; all-or-nothing updates; installer asks label/Y/focus/corridors (storage auto-detected) |
 | WP-I Integration | coordinator | TODO | | | |
 | WP-R Code review | agent 7 | TODO | | | |
 | WP-G In-game acceptance | you | TODO | | | |
@@ -49,8 +49,8 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | R13 | returnHome failure ignored | B, C | TODO | scenario 4 |
 | R14 | Gives up after 10 tries | A | TODO | scenario 3 |
 | R15 | Per-block network + disk spam | C, D | TODO | review |
-| R16 | Updater misbehaves | E | TODO | review + in-game |
-| R17 | Duplicate old copies | E | TODO | review |
+| R16 | Updater misbehaves | E | DONE | WP-E tests; in-game pending |
+| R17 | Duplicate old copies | E | DONE | WP-E tests; in-game pending |
 
 ## Test scenarios (simulator)
 
@@ -87,3 +87,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | Review done, PLAN.md + TRACKING.md written. Waiting on decisions D1–D6 before WP-0. |
 | 2026-10-31 | coordinator | Decisions D1–D6 answered. Plan updated (journal recovery, grid, pocket monitor). Starting WP-0. |
 | 2026-10-31 | coordinator | WP-0 done: PROTOCOL.md, INTERFACES.md, miner/config.lua. Launched agents for WP-T, A, B, C, D, E in parallel worktrees. |
+| 2026-10-31 | coordinator | WP-E merged. Told WP-A to keep .tm_state/journal format WP-E reads; told WP-C to use require("updater").run and random seq start. |
