@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- TurtleMiner mining pattern (WP-B).
 -- Grid in the home frame (F = homeFacing, R = homeFacing + 1), all at cfg.TARGET_Y:
 --   shaft  : home x/z, home y -> TARGET_Y
@@ -123,18 +123,28 @@ local function buildOreSet()
     return oreSet
 end
 
+-- Ore family: "deepslate_iron_ore", "iron_ore" and "raw_iron_block" (1.18 large veins) are all
+-- "iron", so they form one vein and FOCUS=iron matches every variant.
+local function familyOf(base)
+    local raw = base:match("^raw_(.+)_block$")
+    if raw then return raw end
+    return (base:gsub("_ore$", ""))
+end
+mine.familyOf = familyOf
+
 function mine.isOre(data)
     if type(data) ~= "table" or type(data.name) ~= "string" then return false end
     local base = (data.name:match(":(.+)$") or data.name):gsub("^deepslate_", "")
-    if buildOreSet()[base] then return true, base end
+    if buildOreSet()[base] then return true, familyOf(base) end
     local tags = data.tags
-    if type(tags) == "table" and (tags["c:ores"] or tags["forge:ores"]) then return true, base end
+    if type(tags) == "table" and (tags["c:ores"] or tags["forge:ores"]) then return true, familyOf(base) end
     return false
 end
 
 local function wanted(family)
     local f = cfg.FOCUS
     if f == nil or f == "" or f == "all" then return true end
+    f = familyOf(f)   -- accept "iron_ore" / "raw_iron_block" as well as "iron"
     return family == f or family:find(f, 1, true) ~= nil
 end
 

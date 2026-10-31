@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- TurtleMiner inventory and fuel (WP-B).
 -- Refuel with a reserve, trash dropping, home storage detection, unload, fuel restock.
 -- Never prompts. Every turn it makes is undone before returning.
@@ -262,25 +262,15 @@ function inv.scanHome()
     return result
 end
 
--- Dump everything except cfg.FUEL_KEEP fuel items. Never prompts.
-function inv.unload()
-    if cfg.BURN_COAL and turtle.getFuelLevel() ~= "unlimited" then
-        inv.refuel(cfg.FUEL_TARGET or 0)
-    end
-    local h = inv.scanHome()
-    if not h.dump then return false, "no_storage" end
-    local failed = atSide(h.dump, function(drop)
-        local keep = cfg.FUEL_KEEP or 0
+-- Drop items at `side`. `pick(name, count)` returns how many of that stack to drop.
+-- Returns true if something could not be dropped (inventory full).
+local function dropAt(side, pick)
+    return atSide(side, function(drop)
         local bad = false
         for slot = 1, 16 do
             local d = turtle.getItemDetail(slot)
             if d then
-                local n = d.count
-                if keep > 0 and fuelValue(d.name) then
-                    local k = math.min(keep, n)
-                    keep = keep - k
-                    n = n - k
-                end
+                local n = pick(d.name, d.count)
                 if n > 0 then
                     turtle.select(slot)
                     drop(n)
@@ -290,6 +280,36 @@ function inv.unload()
         end
         turtle.select(1)
         return bad
+    end)
+end
+
+-- Dump everything except cfg.FUEL_KEEP fuel items. Never prompts.
+-- Mined fuel is burned first (BURN_COAL); fuel beyond the reserve goes back to the fuel
+-- inventory when there is one, so coal never ends up in the storage chest.
+function inv.unload()
+    if cfg.BURN_COAL and turtle.getFuelLevel() ~= "unlimited" then
+        inv.refuel(cfg.FUEL_TARGET or 0)
+    end
+    local h = inv.scanHome()
+    if not h.dump then return false, "no_storage" end
+    -- surplus fuel -> fuel inventory (whatever does not fit falls through to the dump)
+    if h.fuel then
+        local keep = cfg.FUEL_KEEP or 0
+        dropAt(h.fuel, function(name, count)
+            if not fuelValue(name) then return 0 end
+            local k = math.min(keep, count)
+            keep = keep - k
+            return count - k
+        end)
+    end
+    local keep = cfg.FUEL_KEEP or 0
+    local failed = dropAt(h.dump, function(name, count)
+        if keep > 0 and fuelValue(name) then
+            local k = math.min(keep, count)
+            keep = keep - k
+            return count - k
+        end
+        return count
     end)
     if failed then return false, "storage_full" end
     return true

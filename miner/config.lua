@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.1.1
 -- TurtleMiner configuration. Do not edit values here; use `install` or
 -- `set tminer.<KEY> <value>` on the turtle, or the SET command from the monitor.
 
@@ -21,11 +21,16 @@ config.DEFAULTS = {
         "coal_ore", "iron_ore", "copper_ore", "gold_ore", "redstone_ore",
         "lapis_ore", "diamond_ore", "emerald_ore", "nether_gold_ore",
         "nether_quartz_ore", "ancient_debris",
-    },                       -- matched against block name with "deepslate_" stripped, any mod namespace
+        "raw_iron_block", "raw_copper_block", "raw_gold_block", -- 1.18 large ore veins
+    },                       -- matched against block name with "deepslate_" stripped, any mod namespace;
+                             -- family = name without "_ore" (raw_X_block -> X), e.g. "iron"
     TRASH = {
         "minecraft:cobblestone", "minecraft:cobbled_deepslate", "minecraft:dirt",
         "minecraft:gravel", "minecraft:tuff", "minecraft:granite", "minecraft:diorite",
         "minecraft:andesite", "minecraft:netherrack", "minecraft:calcite",
+        "minecraft:smooth_basalt", "minecraft:amethyst_block", "minecraft:amethyst_shard",
+        "minecraft:pointed_dripstone", "minecraft:dripstone_block", "minecraft:sand",
+        "minecraft:flint", "minecraft:moss_block", "minecraft:basalt", "minecraft:blackstone",
     },
     DROP_TRASH      = true,  -- drop TRASH items in the tunnel when inventory is nearly full
 

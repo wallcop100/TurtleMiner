@@ -90,8 +90,8 @@ Settings live in the turtle's settings file under `tminer.<KEY>`. Change them wi
 | `FOCUS` | `all` | yes | `all` or one ore family (`diamond`, `iron`, `ancient_debris`, ...) |
 | `VEIN_MINING` | true | yes | Follow ore veins |
 | `VEIN_MAX` | 64 | yes | Max blocks per vein |
-| `ORES` | (list) | no | Block names counted as ore (`deepslate_` variants included) |
-| `TRASH` | (list) | no | Items dropped in the tunnel when nearly full |
+| `ORES` | (list) | no | Block names counted as ore (`deepslate_` variants included; also `raw_iron/copper/gold_block` from 1.18 large veins, same family as the ore, e.g. `iron`) |
+| `TRASH` | (list) | no | Items dropped in the tunnel when nearly full: cobblestone, cobbled deepslate, dirt, gravel, sand, flint, tuff, granite, diorite, andesite, calcite, smooth basalt, basalt, blackstone, netherrack, moss, amethyst block/shard, dripstone |
 | `DROP_TRASH` | true | yes | Drop `TRASH` items instead of carrying them home |
 | `FUEL_MARGIN` | 200 | yes | Spare fuel kept on top of the distance home |
 | `FUEL_KEEP` | 16 | yes | Fuel items kept in reserve, never unloaded |
