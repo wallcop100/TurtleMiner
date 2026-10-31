@@ -110,3 +110,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | Coal/lists fix merged (8d83b90): 17/21 pass. Remaining: 2, 9, 19, 20. |
 | 2026-10-31 | coordinator | Recovery/mob fix merged (e7951b3). Root cause of 2/9: setPhase('RECOVER') saved a stale snapshot over the journal before nav.recover ran. |
 | 2026-10-31 | coordinator | Fuel-to-leave fix merged (0a88a2f). Suite 21/21 green. miner.lua bumped to 1.1.2 (two fixes both used 1.1.1). Starting WP-R review. |
+| 2026-10-31 | coordinator | Added setup.lua (one-command download per computer from this branch); README install points at the branch. User starting in-game setup while WP-R review runs. |

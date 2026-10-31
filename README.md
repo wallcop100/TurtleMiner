@@ -23,7 +23,25 @@ Keep the home and mining area chunk-loaded if you can. If not, the turtle resume
 
 ## Install
 
-The examples use `wget` from GitHub; copying from a floppy disk works the same way. CC has no shell variables: wherever you see `BASE`, type `https://raw.githubusercontent.com/wallcop100/TurtleMiner/main`.
+### Quick setup (HTTP API enabled in CC)
+
+One command per computer. `setup.lua` downloads everything from the `claude/vigilant-pasteur-g2krss` branch (change `BRANCH` at its top once this is merged to `main`).
+
+```
+wget run https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss/setup.lua server
+```
+
+Use `server` on the main computer (monitor + update server, files in `/files/`), `monitor` for extra monitor computers, `pocket` on a pocket computer. Reboot each one afterwards. Then on each turtle at its home spot:
+
+```
+wget run https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss/miner/install.lua
+```
+
+The installer pulls the miner files from the update server. With no update server, run `setup turtle` on the turtle first, then `install`.
+
+### Manual setup
+
+The examples use `wget` from GitHub; copying from a floppy disk works the same way. CC has no shell variables: wherever you see `BASE`, type `https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss` (or `.../main` once merged).
 
 ### 1. Update server (do this first)
 
@@ -46,7 +64,7 @@ If the monitor runs on the same computer, its `startup.lua` and this one collide
 One command, at the turtle's home spot (chest behind or beside, not below):
 
 ```
-wget run https://raw.githubusercontent.com/wallcop100/TurtleMiner/main/miner/install.lua
+wget run BASE/miner/install.lua
 ```
 
 The installer checks modem, pickaxe and fuel, fetches all miner files from the update server, asks four questions (name, mining Y, ore focus, number of corridors), writes the settings and `startup.lua`. `install --default` skips the questions. Then reboot, or run `miner`.
