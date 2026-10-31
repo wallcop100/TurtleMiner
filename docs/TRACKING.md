@@ -28,7 +28,7 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | WP-E Install / Update / Cleanup | agent 6 | DONE | merged | 88aa268 (cherry-picked) | 37 throwaway tests pass. Deviations: updater called via require().run not shell.run; seq starts random; all-or-nothing updates; installer asks label/Y/focus/corridors (storage auto-detected) |
 | WP-I Integration | coordinator | DONE | claude/vigilant-pasteur-g2krss | | All 20 scenarios + selftest pass (21/21). Fix commits: 8d83b90 coal/lists, e7951b3 recovery/mob, 0a88a2f fuel-to-leave. |
 | WP-R Code review | agent 7 | DONE | read-only | | 21 findings (2 high). #2 and #13 fixed by coordinator; rest in WP-F below. |
-| WP-F Review fixes | agents X/Y/Z | DOING | worktrees | | X: nav/state (#1,#4,#5,#10). Y: inv/mine/sim (#1 scan,#3,#4,#6,#10,#11,#20). Z: miner/monitor/install/README (#7,#8,#9,#12,#14-#19,#21) |
+| WP-F Review fixes | agents X/Y/Z | DONE | worktrees | | X: nav/state (#1,#4,#5,#10). Y: inv/mine/sim (#1 scan,#3,#4,#6,#10,#11,#20). Z: miner/monitor/install/README (#7,#8,#9,#12,#14-#19,#21) |
 | WP-G In-game acceptance | you | TODO | | | |
 
 ## Army (phase 2, see ARMY_PLAN.md)
@@ -70,17 +70,17 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 
 | # | Sev | Finding | Owner | Status |
 |---|-----|---------|-------|--------|
-| 1 | HIGH | Crash during a turn strands turtle (no GPS always; GPS calibrate can't turn/dig in 1x1 tunnel) | X + Y | PARTIAL (nav: GPS calibrate turns/digs, no-GPS inspect check; no-GPS turn crash with same block in front still NEEDS_HELP — X 7cd8432) |
+| 1 | HIGH | Crash during a turn strands turtle (no GPS always; GPS calibrate can't turn/dig in 1x1 tunnel) | X + Y | DONE (X GPS calibrate + inspect; Y fewer turns 274→224; residual: no-GPS turn crash facing solid wall → RESET_HOME) |
 | 2 | HIGH | `wget run install` can't require its modules; fallback startup never auto-updates | coordinator | DONE (package.path, updater replaces fallback startup, README uses wget + install) |
-| 3 | HIGH/MED | Chest on modem side invisible → loot into fuel chest / fuel chest unused | Y | TODO |
-| 4 | MED | Crash between refuel and journal R line → position unknown at home | X + Y | DONE (X 7cd8432; inv logging pending Y) |
-| 5 | MED | Unlimited fuel + no GPS → every dangling move intent = NEEDS_HELP | X | PARTIAL (inspect settles when block changes; air→air still NEEDS_HELP) |
-| 6 | MED | FUEL_KEEP reserve never burned even when stranded | Y | TODO |
+| 3 | HIGH/MED | Chest on modem side invisible → loot into fuel chest / fuel chest unused | Y | DONE (Y) |
+| 4 | MED | Crash between refuel and journal R line → position unknown at home | X + Y | DONE (X+Y, scenario 26: 18 crash cases recover) |
+| 5 | MED | Unlimited fuel + no GPS → every dangling move intent = NEEDS_HELP | X | PARTIAL (air→air move without fuel/GPS still NEEDS_HELP) |
+| 6 | MED | FUEL_KEEP reserve never burned even when stranded | Y | DONE (Y + miner wiring) |
 | 7 | MED | DONE can't be left by raising MAX_CORRIDORS; no RESET_JOB button | Z | DONE (Z) |
 | 8 | MED | Monitor/pocket can only SET TARGET_Y and FOCUS | Z | DONE (Z, SET screen all 16 keys) |
 | 9 | MED | Lost state + GPS → walks back to old server home record | Z | DONE (Z, home_clear added to protocol) |
-| 10 | MED | goHome/backtrack dig anything incl. chests; climb-first fallback near base | X + Y | PARTIAL (nav never digs protected, no climb-first to home; mine.retreat pending Y) |
-| 11 | MED/LOW | Fuel-home uses Manhattan, real route via tunnels is longer | Y | TODO |
+| 10 | MED | goHome/backtrack dig anything incl. chests; climb-first fallback near base | X + Y | DONE (X+Y; goHome stops on protected block in retreat) |
+| 11 | MED/LOW | Fuel-home uses Manhattan, real route via tunnels is longer | Y | DONE (Y routeHomeLength) |
 | 12 | LOW/MED | UPDATE parks turtle in IDLE until RESUME | Z | DONE (Z) |
 | 13 | LOW | Installer GPS check always false | coordinator | DONE |
 | 14 | LOW | Defaults reach beyond loaded chunks; nearby homes overlap (docs) | Z | DONE (README) |
@@ -89,7 +89,7 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 17 | LOW | PAUSED turtle goes home after reboot | Z | DONE (Z) |
 | 18 | LOW | miner.lua VERSION constant stale | Z | DONE (Z) |
 | 19 | LOW | startup may run updater mid-job when last journal line is R | Z | DONE (Z) |
-| 20 | LOW | Any inventory peripheral (furnace etc.) may be picked as dump | Y | TODO |
+| 20 | LOW | Any inventory peripheral (furnace etc.) may be picked as dump | Y | DONE (Y) |
 | 21 | LOW | SET HOME_Y shifts pos but not journal history | Z | DONE (Z, HOME_Y only at home, journal wiped) |
 
 ## Test scenarios (simulator)
@@ -156,3 +156,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | Army scope answered; docs/ARMY_PLAN.md written. 4 open questions. Starts after WP-F + in-game test. |
 | 2026-10-31 | coordinator | Army questions answered: 2nd shaft allowed, server near or far, GPS hardware ready, carry no-GPS turtles to join, auto bridge on all turtles. |
 | 2026-10-31 | coordinator | WP-F Z merged (3d58acd): 30/30 green. Waiting on WP-F Y (inv/mine/sim). |
+| 2026-10-31 | coordinator | WP-F Y merged (7e717a2); goHome now honours mine.retreat result (no digging fallback past protected blocks). Suite 35/35. Ready for in-game test. |

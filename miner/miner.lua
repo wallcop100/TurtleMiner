@@ -1,4 +1,4 @@
--- Version: 1.2.0
+-- Version: 1.2.1
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
@@ -357,7 +357,18 @@ local function goHome()
     if not atHome() then
         -- Walk back through our own tunnels to the shaft first; a straight goTo
         -- at mining depth would cut new tunnels through rock.
-        if not st.lost and not noRetreat then pcall(mine.retreat) end
+        if not st.lost and not noRetreat then
+            local okc, rok, rreason, rdetail = pcall(mine.retreat)
+            if okc and not rok and rreason == "no_fuel" then
+                pcall(inv.refuel, inv.fuelNeeded(st), { emergency = true })
+                okc, rok, rreason, rdetail = pcall(mine.retreat)
+            end
+            -- A protected block (chest, computer, turtle) in our own tunnels: don't
+            -- fall back to a digging goTo, ask for help instead.
+            if okc and not rok and rreason == "stuck" then
+                return false, "stuck: " .. tostring(rdetail or "retreat blocked")
+            end
+        end
         local ok, reason = nav.goTo(st.home)
         if not ok and reason == "no_fuel" then
             -- Stranded: burn anything, including the FUEL_KEEP reserve (older inv ignores opts).
