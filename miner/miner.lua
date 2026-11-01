@@ -1,4 +1,4 @@
--- Version: 1.4.0
+-- Version: 1.4.1
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
@@ -390,6 +390,9 @@ end
 
 local function applyCmd(c)
     local name, params = c.cmd, c.params or {}
+    -- Visible trace on the turtle's screen, so "the command arrived but nothing happened"
+    -- can be told apart from "it never arrived".
+    log(("cmd %s (%s) in %s"):format(tostring(name), c.isLocal and "key" or tostring(c.id), tostring(st and st.phase)))
     if name == "RETURN_HOME" then
         req.ret, req.pause = true, false
     elseif name == "PAUSE" then
