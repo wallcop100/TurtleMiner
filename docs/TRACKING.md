@@ -224,3 +224,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-01 | coordinator | MU-0 merged (d3efd91): 4-word phrase, signed messages, disk/approve join. Suite 56/56. Existing installs need setup network / install --network once. |
 | 2026-11-01 | coordinator | User: no network prompt, 'setup network' did nothing (setup.lua was never saved locally under wget run). Fix: tmjoin.bootPrompt at boot on tminer_server/relay (waits) and turtles with a modem (60 s, then offline); setup.lua saves itself. |
 | 2026-11-01 | coordinator | Order confirmed by user: GPS offer (CG-3, CG-3b, CG-4) starts straight after mesh updates (MU-1..3). |
+| 2026-11-01 | coordinator | Order agreed with user: finish mesh updates → army (AR-0..AR-5) → GPS offer. Fewer, leaner agents; small fixes done inline. |
