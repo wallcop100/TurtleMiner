@@ -2,9 +2,9 @@
 
 Branch mining for CC:Tweaked turtles that keeps going on its own. Turtles save their position before every move, survive server restarts and chunk unloads, burn the coal they find, and say plainly when they need help. A monitor (computer screen, monitor wall or pocket computer) shows the whole fleet and sends commands. It works with no modem at all, basic modems, ender modems, wired networks, or any mix, on basic or advanced hardware. Everything is detected automatically; settings only override.
 
-> Status: the turtle, monitor, comms and update server are done and tested in a simulator (47 scenarios). **Server clustering and the GPS setup offer are being built** (sections marked *coming*). Nothing here has been signed off in a live world yet; please report what you see.
+> Status: the turtle, monitor, comms, update server and server clustering are done and tested in a simulator (52 scenarios). **The GPS setup offer, mining-network security and mesh updates are being built** (sections marked *coming*). Nothing here has been signed off in a live world yet; please report what you see.
 
-Contents: [Quick start](#quick-start) · [What you need](#what-you-need) · [Install](#install) · [Using it](#using-it) · [Networking](#networking) · [GPS](#gps) · [Clustering](#clustering-coming) · [Updates](#updates) · [Settings](#settings) · [Phases and help messages](#phases-and-help-messages) · [Troubleshooting](#troubleshooting) · [For developers](#for-developers)
+Contents: [Quick start](#quick-start) · [What you need](#what-you-need) · [Install](#install) · [Using it](#using-it) · [Networking](#networking) · [GPS](#gps) · [Clustering](#clustering) · [Updates](#updates) · [Settings](#settings) · [Phases and help messages](#phases-and-help-messages) · [Troubleshooting](#troubleshooting) · [For developers](#for-developers)
 
 ---
 
@@ -61,9 +61,9 @@ Any computer, basic or advanced. A monitor of any size (touch on advanced monito
 
 | Role | Use on | Installs | Starts at boot |
 |------|--------|----------|----------------|
-| `server` | Main computer | Monitor UI, update server, GitHub auto-pull, miner files in `/files/` | Monitor + update server |
-| `monitor` | Extra computer with a monitor | Monitor UI | Monitor |
-| `pocket` | Pocket computer | Monitor UI (phone layout) | Monitor |
+| `server` | Any server computer | `tminer_server` (roles detected automatically) + miner files in `/files/` for serving updates | `tminer_server` |
+| `monitor` | Another server computer | Same program, without `/files/` | `tminer_server` |
+| `pocket` | Pocket computer | Same program; runs as a phone-sized client | `tminer_server` |
 | `relay` | Any spare computer | `relay.lua` | Relay |
 | `turtle` | A turtle with no server around | All miner files | (run `install` next) |
 
@@ -92,12 +92,7 @@ It:
 ### Manual install
 Copy the files yourself (disk or `wget`), e.g. `wget BASE/miner/nav.lua nav.lua`.
 - Turtle: everything in `miner/` to the turtle's root, then `install`.
-- Server: `servers/central_monitor.lua`, `servers/startup.lua` (as `monitor_startup.lua`), `servers/update_server/update_server.lua`, `servers/update_server/github_pull.lua`, and `miner/*` into `/files/`. Make `startup.lua` run both:
-  ```lua
-  parallel.waitForAny(
-      function() shell.run("update_server") end,
-      function() shell.run("monitor_startup") end)
-  ```
+- Server: `servers/tminer_server.lua`, `servers/tm_*.lua`, `servers/central_monitor.lua`, `servers/update_server/github_pull.lua`, `servers/startup.lua` (as `tminer_startup.lua`), and `miner/*` into `/files/`. `startup.lua` is one line: `shell.run("tminer_startup")`.
 
 ---
 
@@ -220,15 +215,37 @@ The server cluster will do this for you. When it sees at least 4 computers with 
 
 ---
 
-## Clustering *(coming)*
+## Clustering
 
-Today: run `setup server` on one computer, and `monitor`/`relay` on others. They already share traffic through the mesh, but each monitor keeps its own records.
+Every server computer runs the same program, `tminer_server` (`setup server`, or `setup monitor` for one without update files). Nothing to configure.
 
-Coming (being built now; `docs/CLUSTER_GPS_PLAN.md`):
-- **One program on every server computer**, `tminer_server`. Each computer works out its own jobs from what's attached: monitor UI, radio gateway (wireless/ender modem), cluster link (wired modem), update server (`/files/`), GPS host.
-- **One cluster**: the computers find each other over any mix of wired and wireless links. The lowest ID is the leader and holds the records (homes, queued commands, away times, event log); the others keep copies every 5 s. If the leader is gone for 15 s the next one takes over with its copy; the old one rejoins as a copy.
-- Commands from any screen go to the leader, so turtles always see one consistent server.
-- Example: 3 computers, one with a wireless modem and all three on a wired cable: the wireless one talks to the turtles, the other two take part through it.
+**Roles are automatic**, checked at boot, every minute and when you attach or remove something:
+
+| The computer has | It does |
+|------------------|---------|
+| A monitor (or it's a pocket) | Shows the UI |
+| A wireless or ender modem | Talks to turtles, relays for the mesh |
+| A wired modem | Links to the other server computers |
+| A `/files/` folder | Serves updates to turtles, pulls from GitHub |
+| (always) | Keeps a copy of the cluster's records |
+
+**One cluster.** Server computers find each other over any mix of wired and wireless links (separate wired networks joined by a computer with both kinds become one cluster). One computer is the **leader**: normally the lowest computer ID when they start together. It holds the records (turtle homes, queued commands, away times, event log), answers the turtles and sends the commands. The others keep a copy, updated within half a second of a change and at least every 5 s.
+
+- **Commands from anywhere:** any computer's screen or a pocket. They go to the leader and are applied once.
+- **Failover:** if the leader is switched off, another computer takes over within about 17 s, with nothing lost; commands typed meanwhile are delivered once. The old leader rejoins as a copy.
+- **Healed splits:** if a cable is cut and later reconnected, the two halves merge back into one leader and hand over what they queued.
+- **Wired-only computers** take full part through any computer with a wireless or ender modem.
+- The screen footer shows the cluster: `LEAD 3pc` on the leader, `ldr#10 3pc` on the others.
+
+Example: 3 computers on one cable, one with a wireless modem. All three run `tminer_server`; the wireless one talks to the turtles, and you can use any of their screens.
+
+**Keyboard on basic hardware:** Tab or arrows move, Enter selects, Backspace goes back, digits type numbers. A basic monitor (no touch) follows the keyboard.
+
+Older installs upgrade themselves through the GitHub pull: `central_monitor` still works (it now starts `tminer_server`), and the old `update_server` steps aside.
+
+## Mining network and mesh updates *(coming)*
+
+Planned (`docs/MESH_UPDATE_PLAN.md`): every device joins a **mining network** at install (name + secret key, shared with a join code), and every message is signed, so other players can't command your turtles or push code to them. Updates then spread device to device over the mesh: pull from GitHub (hourly, at boot, or **Check now** on the monitor) or edit a file by hand on any computer, and every device updates itself (turtles at home, computers when idle, one reboot each). An update that makes a device crash is rolled back automatically and blocked across the network.
 
 ---
 
