@@ -1,4 +1,4 @@
--- Version: 1.0.1
+-- Version: 1.0.2
 -- TurtleMiner network layer (TMINER protocol v1, see docs/PROTOCOL.md).
 -- One rednet wrapper for the whole turtle. Never moves the turtle, never relays.
 -- Works offline: with no modem every send is a silent no-op.
@@ -166,6 +166,13 @@ end
 
 local function onEvent(ev)
     if ev[1] == "rednet_message" and ev[4] == PROTO then handle(ev[3]) end
+end
+
+-- Queue a command typed on the turtle itself (no network needed).
+local localSeq = 0
+function net.pushLocal(cmd, params)
+    localSeq = localSeq + 1
+    inbox[#inbox + 1] = { id = "local-" .. localSeq, cmd = cmd, params = params or {}, isLocal = true }
 end
 
 function net.poll()

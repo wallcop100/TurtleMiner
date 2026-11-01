@@ -119,6 +119,23 @@ Touch a turtle (or click it on the pocket screen) to see its details and command
 | RESET HOME | (asks first) "It is at its home now": use the current spot as home |
 | REBOOT | (asks first) Save and restart the turtle |
 
+## Running without a monitor or modem
+
+A turtle works on its own: no modem, no server, no GPS needed. Without a modem it uses `HOME_Y` (the installer asks) and its own move journal for position. Install with `setup.lua turtle` (needs only the HTTP API), then `install`.
+
+Keyboard controls on the turtle's screen (work with or without a monitor):
+
+| Key | Does |
+|-----|------|
+| `R` | Resume (from PAUSED, IDLE, DONE after raising MAX_CORRIDORS, or NEEDS_HELP) |
+| `P` | Pause where it is |
+| `B` | Return home and wait |
+| `S` | Print phase, reason, position, fuel |
+| `H` twice within 5 s | "This spot is home" (same as RESET_HOME) |
+| `?` | Show the key list |
+
+Change settings with `set tminer.<KEY> <value>` and reboot. Without a monitor you only see problems on the turtle's own screen; rebooting a turtle in NEEDS_HELP retries.
+
 ## Configuration
 
 Settings live in the turtle's settings file under `tminer.<KEY>`. Change them with `install`, `set tminer.<KEY> <value>` on the turtle, or the monitor's SET... button (keys marked **remote**; the turtle applies them at once and acks or refuses). Restart the miner after a local `set`.

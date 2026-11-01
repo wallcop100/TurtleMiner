@@ -1,4 +1,4 @@
--- Version: 1.2.1
+-- Version: 1.2.2
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
@@ -830,4 +830,32 @@ end
 
 net.init(cfg)
 net.setValidator(validateCmd)
-parallel.waitForAny(worker, function() net.run(getStatus) end)
+-- Keyboard controls on the turtle itself, so it can be run with no monitor or modem.
+local KEYHELP = "Keys: R resume  P pause  B return home  S status  H twice = this is home"
+local function keyboard()
+    local lastH = 0
+    while true do
+        local _, ch = os.pullEvent("char")
+        ch = ch:lower()
+        if ch == "r" then net.pushLocal("RESUME"); print("> RESUME")
+        elseif ch == "p" then net.pushLocal("PAUSE"); print("> PAUSE")
+        elseif ch == "b" then net.pushLocal("RETURN_HOME"); print("> RETURN_HOME")
+        elseif ch == "s" then
+            print(("> %s %s | pos %d,%d,%d | fuel %s"):format(tostring(st and st.phase), tostring(st and st.reason or ""),
+                st and st.pos.x or 0, st and st.pos.y or 0, st and st.pos.z or 0, tostring(turtle.getFuelLevel())))
+        elseif ch == "h" then
+            local now = os.epoch("utc")
+            if now - lastH < 5000 then
+                net.pushLocal("RESET_HOME"); print("> RESET_HOME (this spot is home)")
+                lastH = 0
+            else
+                lastH = now
+                print("> press H again within 5 s to make this spot home")
+            end
+        elseif ch == "?" then print(KEYHELP)
+        end
+    end
+end
+
+print(KEYHELP)
+parallel.waitForAny(worker, function() net.run(getStatus) end, keyboard)

@@ -349,7 +349,8 @@ function H.minerSetup(opts)
         w:set(home.x + F.x, home.y + 1, home.z + F.z, "air")
     end
     local t = sim.turtle(w, { id = opts.id or 1, label = opts.label or ("T" .. (opts.id or 1)), pos = home,
-        facing = facing, fuel = opts.fuel or 5000, gps = opts.gps, inventory = opts.inventory })
+        facing = facing, fuel = opts.fuel or 5000, gps = opts.gps, inventory = opts.inventory,
+        modem = opts.modem })
     t.computer.label = opts.label or ("T" .. t.id)
     ctx.t = t
     -- Without GPS the miner needs HOME_Y (the installer asks for it); TARGET_Y is world Y.

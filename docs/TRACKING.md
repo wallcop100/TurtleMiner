@@ -158,3 +158,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | WP-F Z merged (3d58acd): 30/30 green. Waiting on WP-F Y (inv/mine/sim). |
 | 2026-10-31 | coordinator | WP-F Y merged (7e717a2); goHome now honours mine.retreat result (no digging fallback past protected blocks). Suite 35/35. Ready for in-game test. |
 | 2026-10-31 | coordinator | Update server auto-pulls newer files from GitHub at boot + every 60 min (github_pull.lua), self-updates server programs with one guarded reboot. Tested with fake http/fs. Needs one manual `setup.lua server` re-run to install. |
+| 2026-11-01 | coordinator | Offline use: keyboard controls on the turtle (R/P/B/S/H) so no monitor is needed for RESUME/RESET_HOME. Scenario 35 (no modem, keys) added. Suite 36/36. |
