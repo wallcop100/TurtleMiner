@@ -7,8 +7,10 @@ Tracked in [TRACKING.md](TRACKING.md) under "Network + mesh updates". Decisions 
 Every device belongs to exactly one **mining network**: a name plus a secret key. Without it, anyone on a multiplayer server with a modem could command your turtles, fake their status, or push code to them.
 
 - **Joining at install:** `install` (turtles) and `setup.lua` (computers, pockets) ask: *create a new network* or *join an existing one*.
-  - **Create:** the device picks a random key and shows a short **join code** (e.g. `MINE-7K2Q-9XFD-4P`) on its screen. The code is the network name plus the key.
-  - **Join:** type the join code. The device checks it by hearing a signed message from the network (or accepts it offline and checks later).
+  - **Create:** the device picks a random **join phrase of 4 words** from a fixed 1024-word list (about 40 bits, e.g. `lava oak ember pick`) and shows it. The key is derived from the phrase and the optional network name (deliberately slowed, so each guess is expensive). CC terminals have no copy-paste, so it's built to be typed: any case or spacing works, and an unknown word gets a "did you mean" suggestion.
+  - **Join by typing** the 4 words.
+  - **Join without typing:** put a floppy disk in a drive next to any network device and choose "copy network to disk", then put it next to the new device; or have the new device ask to join and press **Approve** on the monitor within 2 minutes. Approve sends the key over the air, so it's only safe if nobody else is listening at that moment; the disk and the phrase are safe.
+  - The device checks the phrase by hearing a signed message from the network (or accepts it offline and checks later).
   - Stored in `.tm_network` (not in `settings`, so `set` listings don't show it). `setup.lua network` changes it later; the monitor can show the join code on demand.
 - **Every `TMINER` message is signed:** HMAC-SHA256 with the network key, covering everything except the fields relays change (`hops`, `via`). Pure-Lua SHA-256 (no CC built-in).
   - Messages with a missing or wrong signature are dropped and never relayed. Several players' networks can share the airwaves without seeing each other.
