@@ -1,4 +1,4 @@
--- Version: 1.0.1
+-- Version: 1.1.0
 -- TurtleMiner persistent state: atomic snapshot + append-only move journal.
 --
 -- Files (turtle root):
@@ -22,6 +22,9 @@
 -- rollback (server crash) that goes back past a snapshot can still be matched by fuel.
 -- Lines after the S whose seq equals st.saveSeq are replayed on recovery; older lines are
 -- history only.
+--
+-- state.save(st, true) ("fresh") drops that history: used after a world rollback, whose
+-- D lines beyond the rollback point describe cells the world no longer has open.
 --
 -- Fields added to st by this module: saveSeq (int), saveFuel (number|"unlimited").
 
@@ -244,8 +247,8 @@ function state.load()
     return a or b
 end
 
--- Atomic snapshot, then rewrite the journal as <history> + "S" line.
-function state.save(st)
+-- Atomic snapshot, then rewrite the journal as <history> + "S" line (fresh: no history).
+function state.save(st, fresh)
     if type(st) ~= "table" then return false end
     st.saveSeq = (st.saveSeq or 0) + 1
     local fuel = fuelNow()
@@ -260,7 +263,7 @@ function state.save(st)
     if not replace(STATE_TMP, STATE) then return false end
 
     -- journal: keep history (no I lines), then the new S line
-    local old = readLines(journalPath())
+    local old = fresh and {} or readLines(journalPath())
     local hist = {}
     for i = 1, #old do
         local t = string.sub(old[i], 1, 1)

@@ -1,4 +1,4 @@
--- Version: 1.0.2
+-- Version: 1.1.0
 -- TurtleMiner navigation: journaled moves/turns, retrying dig/attack, goTo, crash recovery,
 -- GPS sync and facing calibration.
 --
@@ -12,12 +12,24 @@
 --   opts.save()                  persist st (default: state.save(st))
 --   opts.cfg                     config table; uses STUCK_TIMEOUT (60) and SNAPSHOT_EVERY (100)
 --   opts.onEvent(level, text)    recovery events ("world rollback", "GPS correction", ...)
+--   opts.isKnownOpen(pos) -> bool  cells the caller knows it dug (mine: completed grid cells);
+--                                 used with the journal's own positions to settle crashes
+--                                 without GPS (see "Known-open map" below)
+--   opts.knownBlock(pos) -> name|nil  a stable block known to be there (main: the storage next
+--                                 to home), also used by the facing probe
 --
 -- Fields added to st by this module:
 --   st.lost           string|nil  position/facing could not be recovered; recover() and goTo()
 --                                 refuse while set. Main clears it on RESET_HOME.
---   st.facingUnknown  bool|nil    set while calibrateFacing() is probing; a crash during the
---                                 probe makes the next recover() calibrate again.
+--   st.facingUnknown  bool|nil    set while calibrateFacing() or the no-GPS facing probe is
+--                                 running; a crash during either makes the next recover()
+--                                 calibrate/probe again.
+--   st.facingCands    {int}|nil   no-GPS probe only: the true facing is st.facing + o for one o
+--                                 in this list. Journaled turns change st.facing and the true
+--                                 facing alike, so the offsets stay valid across probe turns.
+--   st.job.noGrid     bool|nil    set after a world rollback: the job's progress may be ahead
+--                                 of the world, so grid cells no longer count as known open
+--                                 (cleared with the job itself).
 --
 -- Intent block names: before every turn (and before every move while fuel is "unlimited", where
 -- fuel cannot tell whether a move happened) the block seen in the op's inspect direction is
@@ -32,6 +44,32 @@
 -- 1x1 tunnel face) and a move whose next cell equals the destination (air -> air in an open
 -- tunnel) cannot be settled without GPS.
 --
+-- Known-open map (no GPS): a cell is known open when the turtle stood in it (any position in
+-- the journal, current segment and history, up to a detected world rollback point) or when
+-- opts.isKnownOpen says so. Everything else is unknown: caves, veins and fluids make any
+-- unknown cell possibly open. Inspect evidence: air and fluids = open; a stable solid block =
+-- solid; falling blocks (gravel/sand can fall into a dug cell), volatile blocks (cobblestone
+-- from lava+water, other turtles) and failures = no evidence.
+--
+-- Turn crash without GPS (inspect cannot settle it): the candidates are "turn did not happen"
+-- and "turn happened" (st.facing + 0 or + 1/-1). The probe turns right 3 times (journaled,
+-- st.facingUnknown/st.facingCands saved first so a crash mid-probe restarts it with the same
+-- candidates plus the one the in-flight probe turn adds), inspects the front cell at each of
+-- the 4 facings, and keeps the candidates under which no known-open neighbour shows a stable
+-- solid block and no known block (opts.knownBlock) shows a different stable block. Exactly one
+-- left = settled. Still ambiguous in the home column below home (shaft: no horizontal cell is
+-- known on the first descent): climb the open shaft to home (vertical moves need no facing)
+-- and probe there against the home storage. Otherwise NEEDS_HELP. In a 1x1 tunnel the cell the
+-- turtle came from alone usually decides it. The same probe settles facings left in doubt by a
+-- world rollback (several journal points with the world's fuel, different facings).
+--
+-- Unlimited fuel, move in flight (air -> air): candidates P (not moved) and Q (moved). Without
+-- turning, the front/up/down cells are inspected; a candidate is dropped when it maps a known-
+-- open cell (P, Q when the intent saw it empty, the journal, the grid) onto a stable solid
+-- block. Exactly one left = settled; otherwise NEEDS_HELP. (Walking back through its own
+-- tunnel, every cell around both candidates is open: that case stays NEEDS_HELP.)
+-- Residual: a player placing a stable block in a known-open cell during the crash window.
+--
 -- Moves that dig never dig protected blocks (names containing chest, barrel, shulker,
 -- computercraft, turtle): they return false, "protected".
 
@@ -42,6 +80,7 @@ local nav = {}
 local st = nil
 local opts = {}
 local movesSinceSave = 0
+local gpsFailY = nil        -- st.pos.y of the last failed gps.locate (see nav.gpsLocate)
 
 local DX = { [0] = 0, [1] = 1, [2] = 0, [3] = -1 }
 local DZ = { [0] = -1, [1] = 0, [2] = 1, [3] = 0 }
@@ -205,10 +244,12 @@ end
 -- init / movement
 ----------------------------------------------------------------------------
 
+-- nav.init(st, opts): see the header for opts.
 function nav.init(stIn, o)
     st = stIn
     opts = o or {}
     movesSinceSave = 0
+    gpsFailY = nil
 end
 
 -- op: "f" | "u" | "d"
@@ -379,10 +420,23 @@ end
 -- GPS
 ----------------------------------------------------------------------------
 
-function nav.gpsLocate()
+-- Wireless modems reach 64 blocks, so underground gps.locate usually times out (2 s). After a
+-- failed locate, nav.gpsLocate() returns nil at once until the turtle has climbed GPS_RETRY_UP
+-- blocks above the failure, or is within GPS_NEAR_HOME blocks of home (or force is true).
+local GPS_RETRY_UP, GPS_NEAR_HOME = 16, 16
+
+function nav.gpsLocate(force)
     if not st or not st.gps or not gps or not gps.locate then return nil end
+    if gpsFailY and not force and type(st.pos) == "table" then
+        local near = type(st.home) == "table" and nav.dist(st.pos, st.home) <= GPS_NEAR_HOME
+        if not near and st.pos.y < gpsFailY + GPS_RETRY_UP then return nil end
+    end
     local ok, x, y, z = pcall(gps.locate, 2)
-    if not ok or not x or not y or not z then return nil end
+    if not ok or not x or not y or not z then
+        gpsFailY = type(st.pos) == "table" and st.pos.y or nil
+        return nil
+    end
+    gpsFailY = nil
     -- round, not floor: guards against 12.9999 style float noise
     return { x = math.floor(x + 0.5), y = math.floor(y + 0.5), z = math.floor(z + 0.5) }
 end
@@ -412,6 +466,7 @@ function nav.calibrateFacing()
     local function finish(f)
         st.facing = f
         st.facingUnknown = nil
+        st.facingCands = nil
         local p = nav.gpsLocate()
         if p then st.pos = p end
         save()
@@ -558,6 +613,120 @@ local function fail(reason)
     return false, reason
 end
 
+local function posKey(p) return p.x .. "," .. p.y .. "," .. p.z end
+
+-- what an inspect result says about a cell (see "Known-open map" in the header)
+local function evidence(name)
+    if type(name) ~= "string" then return nil end
+    local k = blockKind(name)
+    if k == "air" or k == "fluid" then return "open" end
+    if k == "solid" then return "solid" end
+    return nil
+end
+
+-- isOpen(pos) for the known-open map: journal points 1..upto, plus the caller's grid cells
+local function knownOpenMap(points, upto, useGrid)
+    local set = {}
+    for i = 1, upto do
+        local p = points[i] and points[i].pos
+        if p then set[posKey(p)] = true end
+    end
+    return function(p)
+        if set[posKey(p)] then return true end
+        if useGrid and opts.isKnownOpen then
+            local ok, r = pcall(opts.isKnownOpen, { x = p.x, y = p.y, z = p.z })
+            return ok and r == true
+        end
+        return false
+    end
+end
+
+local function offsetList(set)
+    local l = {}
+    for o = 0, 3 do if set[o] then l[#l + 1] = o end end
+    return l
+end
+
+local function knownBlock(p)
+    if not opts.knownBlock then return nil end
+    local ok, r = pcall(opts.knownBlock, { x = p.x, y = p.y, z = p.z })
+    if ok and type(r) == "string" and blockKind(r) == "solid" then return r end
+    return nil
+end
+
+-- No-GPS facing probe (see header). st.pos is known; true facing = st.facing + o, o in offs.
+-- Returns true, or false + number of consistent candidates.
+local function probeFacingHere(offs, isOpen)
+    st.facingUnknown = true
+    st.facingCands = offsetList(offs)
+    save()
+    local f0 = st.facing
+    local names = {}
+    for i = 0, 3 do
+        if i > 0 and not step("r") then return false, -1 end
+        names[i] = look("inspect")
+    end
+    local match = {}
+    for _, o in ipairs(st.facingCands) do
+        local ok = true
+        for i = 0, 3 do
+            local d = (f0 + o + i) % 4
+            local n = { x = st.pos.x + DX[d], y = st.pos.y, z = st.pos.z + DZ[d] }
+            local ev = evidence(names[i])
+            if ev == "solid" and isOpen(n) then ok = false; break end
+            local kb = knownBlock(n)
+            if kb and ev == "solid" and names[i] ~= kb then ok = false; break end
+        end
+        if ok then match[#match + 1] = o end
+    end
+    if #match ~= 1 then return false, #match end
+    st.facing = (st.facing + match[1]) % 4
+    st.facingUnknown = nil
+    st.facingCands = nil
+    save()
+    return true
+end
+
+-- Probe here; still ambiguous below home in its column (shaft): climb the open shaft to home
+-- and probe there. Offsets survive vertical moves (they never change the facing).
+local function probeFacing(offs, isOpen)
+    local ok, n = probeFacingHere(offs, isOpen)
+    if ok or n == -1 then return ok, n end
+    local h = st.home
+    if type(h) ~= "table" or st.pos.x ~= h.x or st.pos.z ~= h.z or st.pos.y >= h.y then return ok, n end
+    local cands = {}
+    for _, o in ipairs(st.facingCands or {}) do cands[o] = true end
+    while st.pos.y < h.y do
+        local fl = fuel()
+        if fl ~= "unlimited" and fl < 1 then return false, n end
+        if turtle.detectUp() or not step("u") then return false, n end
+    end
+    event("info", "facing unknown in the shaft: climbed home to probe there")
+    return probeFacingHere(cands, isOpen)
+end
+
+-- Unlimited fuel, move op in flight (see header). Returns the settled position or nil.
+-- useFront: the facing is known (front inspect means something).
+local function settleMove(P, facing, pend, isOpen, useFront)
+    local Q = applyOp(P, facing, pend.op)
+    local qOpen = pend.op ~= "b" and evidence(pend.front) == "open"
+    local function known(c)
+        return samePos(c, P) or (qOpen and samePos(c, Q)) or isOpen(c)
+    end
+    local obs = { u = evidence(look("inspectUp")), d = evidence(look("inspectDown")) }
+    if useFront then obs.f = evidence(look("inspect")) end
+    local function consistent(X)
+        for dir, ev in pairs(obs) do
+            if ev == "solid" and known((applyOp(X, facing, dir))) then return false end
+        end
+        return true
+    end
+    local a, b = consistent(P), consistent(Q)
+    if a and not b then return P end
+    if b and not a then return Q end
+    return nil
+end
+
 function nav.recover(stIn)
     if stIn then st = stIn end
     local entries = state.readJournal()
@@ -567,9 +736,23 @@ function nav.recover(stIn)
 
     local last = points[#points]
     local cur = { pos = copyPos(last.pos), facing = last.facing, fuel = last.fuel }
-    local facingDoubt = st.facingUnknown and true or false
+    -- facing offsets: the true facing is cur.facing + o for some o in offs
+    local offs = { [0] = true }
+    if st.facingUnknown then
+        if not st.gps and type(st.facingCands) == "table" and #st.facingCands > 0 then
+            offs = {}
+            for _, o in ipairs(st.facingCands) do
+                if type(o) == "number" then offs[math.floor(o) % 4] = true end
+            end
+        else
+            offs = { [0] = true, [1] = true, [2] = true, [3] = true }
+        end
+    end
     local turnByInspect = false
     local posUnknown = false
+    local knownUpto = #points     -- journal points whose cells the world still has open
+    local rolledBack = false
+    local movePending = nil       -- unlimited fuel: move that may or may not have happened
     local reasonFacing = "facing unknown after crash"
     local reasonPos = "position unknown after crash"
 
@@ -581,12 +764,16 @@ function nav.recover(stIn)
         return provesOp(pending.front, look(INSPECT[op]))
     end
     local function settleTurn()
-        if not st.facingUnknown and inspectProves(pending.op) then
+        if inspectProves(pending.op) then
+            -- the turn happened; it changes the journal facing and the true facing alike
             cur.pos, cur.facing = applyOp(cur.pos, cur.facing, pending.op)
             turnByInspect = true
             event("info", "turn in flight at crash settled by inspect (block in front changed)")
         else
-            facingDoubt = true
+            local d = (pending.op == "r") and 1 or 3
+            local n = {}
+            for o in pairs(offs) do n[o] = true; n[(o + d) % 4] = true end
+            offs = n
         end
     end
     if pending then
@@ -596,6 +783,7 @@ function nav.recover(stIn)
                 cur.pos, cur.facing = applyOp(cur.pos, cur.facing, pending.op)
                 cur.fuel = worldFuel
                 points[#points + 1] = { pos = cur.pos, facing = cur.facing, fuel = worldFuel, tag = "D" }
+                knownUpto = #points
             elseif worldFuel == pending.fuel then
                 if not isMove then settleTurn() end
             else
@@ -608,6 +796,7 @@ function nav.recover(stIn)
                 event("info", "move in flight at crash settled by inspect")
             else
                 posUnknown = true
+                if not numeric then movePending = pending end
             end
         else
             settleTurn()
@@ -626,13 +815,16 @@ function nav.recover(stIn)
                 local a, b = points[i - 1], points[i]
                 if not samePos(a.pos, b.pos) then lost = lost + 1 end
             end
-            -- all points with this fuel in a row: same position, but turns may separate them
+            -- all points with this fuel in a row: same position, but turns may separate them;
+            -- the world stopped at one of them, so its facing is one of theirs
             local j = k
             while j > 1 and points[j - 1].fuel == worldFuel do j = j - 1 end
-            for i = j, k do
-                if points[i].facing ~= points[k].facing then facingDoubt = true end
-            end
+            local n = {}
+            for i = j, k do n[(points[i].facing - points[k].facing) % 4] = true end
+            if st.facingUnknown then n = { [0] = true, [1] = true, [2] = true, [3] = true } end
+            offs = n
             cur.pos = copyPos(points[k].pos); cur.facing = points[k].facing; cur.fuel = worldFuel
+            knownUpto, rolledBack = k, true
             event("warn", "world rollback detected: " .. lost .. " moves lost, back at " .. posStr(cur.pos))
         else
             -- crash in the middle of a refuel: fuel between a point and the R after it
@@ -642,6 +834,7 @@ function nav.recover(stIn)
                 if q.tag == "R" and isNum(p.fuel) and isNum(q.fuel)
                     and worldFuel > p.fuel and worldFuel < q.fuel then
                     cur.pos = copyPos(p.pos); cur.facing = p.facing; cur.fuel = worldFuel
+                    knownUpto, rolledBack = i - 1, true
                     found = true
                     break
                 end
@@ -653,42 +846,85 @@ function nav.recover(stIn)
                 found = true
                 event("info", "fuel rose without a journal record (refuel before crash), position kept")
             end
-            if not found then posUnknown = true; facingDoubt = true end
+            if not found then
+                posUnknown = true
+                offs = { [0] = true, [1] = true, [2] = true, [3] = true }
+            end
         end
         unresolved = false
     end
     if unresolved then posUnknown = true end
+    local nOffs = #offsetList(offs)
+    local facingDoubt = not (nOffs == 1 and offs[0])
 
-    -- step 4: GPS
-    if st.gps then
-        local g = nav.gpsLocate()
-        if g then
-            if not samePos(g, cur.pos) then
-                event("warn", "GPS correction: journal " .. posStr(cur.pos) .. " -> GPS " .. posStr(g))
-                -- the inspect comparison assumed the journal position
-                if turnByInspect then facingDoubt = true end
-            end
-            cur.pos = g
-            posUnknown = false
+    if rolledBack and type(st.job) == "table" then st.job.noGrid = true end
+    -- after a rollback the journal lines past the rollback point name cells the world lost
+    local function finalSave()
+        if rolledBack then return state.save(st, true) end
+        return save()
+    end
+
+    -- step 4: GPS. Underground a GPS turtle is usually out of modem range (64 blocks): with no
+    -- fix it recovers exactly like a blind turtle (journal, inspect, known-open map probing).
+    local g = st.gps and nav.gpsLocate() or nil
+    local isOpen = knownOpenMap(points, knownUpto, not rolledBack)
+    if g then
+        local corrected = not samePos(g, cur.pos)
+        if corrected then
+            event("warn", "GPS correction: journal " .. posStr(cur.pos) .. " -> GPS " .. posStr(g))
+            -- the inspect comparison assumed the journal position
+            if turnByInspect then facingDoubt = true end
         end
+        cur.pos = g
+        posUnknown = false
         st.pos = cur.pos; st.facing = cur.facing
-        if posUnknown then return fail(reasonPos .. " (no GPS signal)") end
         if facingDoubt then
+            if rolledBack then finalSave() end
             local ok, err = nav.calibrateFacing()
+            if not ok and not corrected and st.facingUnknown and not st.facingCands then
+                -- GPS answered once but not for the calibration (edge of range): the journal
+                -- position was right, so the blind probe applies. calibrateFacing's own turns
+                -- are journaled, so every facing is a candidate relative to st.facing now.
+                local pok, n = probeFacing({ [0] = true, [1] = true, [2] = true, [3] = true }, isOpen)
+                if pok then
+                    ok = true
+                    event("info", "facing settled by probing (GPS calibration failed: " .. tostring(err) .. ")")
+                end
+            end
             if not ok then return fail(err or "cannot calibrate facing") end
         end
         st.lost = nil
     else
+        local sfx = st.gps and " (no GPS signal)" or ""
         st.pos = cur.pos; st.facing = cur.facing
-        if posUnknown then return fail(reasonPos) end
-        if facingDoubt then return fail(reasonFacing) end
         if st.lost then
             -- an earlier boot could not recover; only RESET_HOME (main) clears this
-            save()
+            finalSave()
             return false, st.lost
         end
+        if posUnknown and movePending then
+            local q = settleMove(cur.pos, cur.facing, movePending, isOpen, not facingDoubt)
+            if q then
+                event("info", "move in flight at crash settled by the known-open map at " .. posStr(q))
+                cur.pos = q
+                st.pos = copyPos(q)
+                posUnknown = false
+            end
+        end
+        if posUnknown then return fail(reasonPos .. sfx) end
+        if facingDoubt and nOffs == 1 then
+            st.facing = (st.facing + offsetList(offs)[1]) % 4
+        elseif facingDoubt then
+            if rolledBack then finalSave() end   -- the probe's own saves keep only clean lines
+            local ok, n = probeFacing(offs, isOpen)
+            if not ok then
+                return fail(reasonFacing .. ((n and n > 1) and (" (probe: " .. n .. " facings fit)")
+                    or " (probe: no facing fits)") .. sfx)
+            end
+            event("info", "facing after crash settled by probing the 4 neighbours")
+        end
     end
-    save()
+    finalSave()
     return true
 end
 

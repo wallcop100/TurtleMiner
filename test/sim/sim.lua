@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- Headless CC:Tweaked simulator: computers, turtles, a voxel world, an
 -- in-memory rednet, and a single event scheduler on a simulated clock.
 --
@@ -224,7 +224,7 @@ function sim.turtle(w, opts)
     for s, it in pairs(opts.inventory or {}) do
         t.inv[s] = { name = it.name or it[1], count = it.count or it[2] or 1 }
     end
-    local c = newComputer({ id = opts.id, label = opts.label, kind = "turtle", gps = t.gps })
+    local c = newComputer({ id = opts.id, label = opts.label, kind = "turtle", gps = t.gps, strictTerm = opts.strictTerm })
     c.turtle = t
     t.computer = c
     t.id = c.id

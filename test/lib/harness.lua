@@ -1,4 +1,4 @@
--- Version: 1.0.1
+-- Version: 1.0.2
 -- Scenario helpers: pass/fail/skip plumbing, crash predicates, a fake TMINER
 -- server (virtual rednet node), truth-vs-belief watchers and the standard
 -- "turtle at home with a chest behind it" setup.
@@ -350,7 +350,7 @@ function H.minerSetup(opts)
     end
     local t = sim.turtle(w, { id = opts.id or 1, label = opts.label or ("T" .. (opts.id or 1)), pos = home,
         facing = facing, fuel = opts.fuel or 5000, gps = opts.gps, inventory = opts.inventory,
-        modem = opts.modem })
+        modem = opts.modem, strictTerm = opts.strictTerm })
     t.computer.label = opts.label or ("T" .. t.id)
     ctx.t = t
     -- Without GPS the miner needs HOME_Y (the installer asks for it); TARGET_Y is world Y.

@@ -1,4 +1,4 @@
--- Version: 4.1.0
+-- Version: 4.1.1
 -- TurtleMiner central monitor. Speaks TMINER v1 only (docs/PROTOCOL.md).
 --   Server mode (normal computer): relays TMINER traffic between all modems, tracks turtles,
 --     keeps home records, broadcasts `fleet`, sends commands to one turtle at a time.
@@ -52,6 +52,7 @@ local SET_KEYS = {
     { "BURN_COAL",       "BURN_COAL",   "bool" },
     { "STATUS_INTERVAL", "STATUS_INT",  "number", 2, 120 },
     { "AUTO_UPDATE",     "AUTO_UPDATE", "bool" },
+    { "SURFACE_IF_LOST", "SURF_LOST",   "bool" },
 }
 M.SET_KEYS = SET_KEYS
 local PHASE_SHORT = {

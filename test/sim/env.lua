@@ -1,4 +1,4 @@
--- Version: 1.0.1
+-- Version: 1.0.2
 -- Builds the CC global environment for one boot of one sim computer:
 -- os, sleep, parallel, rednet, peripheral, gps, settings, textutils, term,
 -- window, paintutils, colors, keys, shell, require, fs, turtle, pocket, io,
@@ -598,7 +598,10 @@ function Env.build(sim, c)
                 if p and p.types[1] == "modem" and p.methods.isWireless() then hasModem = true end
             end
             if not hasModem then return nil end
-            if c.gps and c.turtle then
+            c.gpsLocates = (c.gpsLocates or 0) + 1
+            -- t.gpsMinY: GPS hosts out of modem range below this Y (64-block wireless range)
+            local t = c.turtle
+            if c.gps and t and not (t.gpsMinY and t.pos.y < t.gpsMinY) then
                 sleep(0.1)
                 local p = c.turtle.pos
                 return p.x, p.y, p.z

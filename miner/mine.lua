@@ -1,4 +1,4 @@
--- Version: 1.0.2
+-- Version: 1.1.0
 -- TurtleMiner mining pattern (WP-B).
 -- Grid in the home frame (F = homeFacing, R = homeFacing + 1), all at cfg.TARGET_Y:
 --   shaft  : home x/z, home y -> TARGET_Y
@@ -81,7 +81,9 @@ local function targetY() return math.floor(cfg.TARGET_Y) end
 local function geom()
     local g = st.job.geom
     if type(g) ~= "table" or not g.bl then
-        g = { bl = cfg.BRANCH_LENGTH, sp = cfg.BRANCH_SPACING, ml = cfg.MAIN_LENGTH }
+        -- y: the level this job's grid was started at (mine.isKnownOpen trusts the grid only
+        -- while TARGET_Y still equals it)
+        g = { bl = cfg.BRANCH_LENGTH, sp = cfg.BRANCH_SPACING, ml = cfg.MAIN_LENGTH, y = targetY() }
         st.job.geom = g
     end
     return g
@@ -637,6 +639,47 @@ function mine.routeHomeLength(p)
     end
     local manhattan = math.abs(p.x - h.x) + math.abs(p.y - h.y) + math.abs(p.z - h.z)
     return math.max(n, manhattan) + extra
+end
+
+-- Is world cell p dug by work this job has already completed, per the saved st.job? Used by
+-- nav.recover (opts.isKnownOpen) to settle a crash without GPS. Counts only the planned grid at
+-- the level the job started (geom.y == TARGET_Y), never vein cells or cells not reached yet,
+-- and nothing after a world rollback (st.job.noGrid). Conservative: false = unknown.
+-- job.step lags the turtle (saved with snapshots), so it never claims too much.
+function mine.isKnownOpen(p)
+    if not ready or type(st) ~= "table" or type(st.job) ~= "table" or type(p) ~= "table" then
+        return false
+    end
+    local job, g = st.job, st.job.geom
+    if job.noGrid or type(job.corridor) ~= "number" or type(g) ~= "table" or not g.bl then return false end
+    if g.y == nil or g.y ~= targetY() or p.y ~= g.y then return false end
+    local c, b, s = job.corridor, job.branch or 0, job.step or 0
+    local sideR = job.side == "R"
+    local started = b > 0 or sideR or s > 0          -- current corridor's main was reached
+    if c == 0 and not started then return false end
+    local w, nb = 2 * g.bl + g.sp, math.floor((g.ml - 1) / g.sp)
+    local f, r = frame(p)
+    if f == 0 and r == 0 then return true end         -- shaft bottom
+    local spineEnd = started and c * w or (c - 1) * w
+    if f == 1 and r >= 0 and r <= spineEnd then return true end
+    local ci = math.floor(r / w + 0.5)
+    if ci < 0 or ci > c or (ci == c and not started) then return false end
+    local off = r - ci * w
+    local mainTo = g.ml
+    if ci == c then
+        if b < nb and (sideR or s > 0) then mainTo = 1 + (b + 1) * g.sp
+        elseif b > 0 then mainTo = 1 + math.min(b, nb) * g.sp
+        else mainTo = 1 end
+    end
+    if off == 0 then return f >= 1 and f <= mainTo end
+    local dist = math.abs(off)
+    if dist > g.bl or f < 1 + g.sp or (f - 1) % g.sp ~= 0 then return false end
+    local bi = (f - 1) / g.sp - 1
+    if bi >= nb then return false end
+    if ci < c or bi < b then return true end
+    if bi > b then return false end
+    if off < 0 then return sideR or dist <= s end     -- side L (-R) is walked first
+    return sideR and dist <= s
 end
 
 return mine

@@ -1,4 +1,4 @@
--- Version: 1.1.1
+-- Version: 1.2.0
 -- TurtleMiner configuration. Do not edit values here; use `install` or
 -- `set tminer.<KEY> <value>` on the turtle, or the SET command from the monitor.
 
@@ -46,6 +46,12 @@ config.DEFAULTS = {
     STUCK_TIMEOUT   = 60,    -- seconds without progress before a move gives up
     HELP_RETRY      = 30,    -- seconds between automatic retries while NEEDS_HELP
     AUTO_UPDATE     = true,  -- check for updates at boot when at home
+
+    -- Recovery
+    SURFACE_IF_LOST = false, -- position lost after a crash: dig straight up (never protected
+                             -- blocks) until 8 open cells in a row, unbreakable block, or fuel 50;
+                             -- then NEEDS_HELP "lost: surfaced here". GPS turtles retry GPS every
+                             -- 16 blocks on the way up and go home on a fix.
 }
 
 -- Keys the monitor may change with SET, with validators.
@@ -74,6 +80,7 @@ config.REMOTE_KEYS = {
     BURN_COAL      = isBool,
     STATUS_INTERVAL= isInt(2, 120),
     AUTO_UPDATE    = isBool,
+    SURFACE_IF_LOST= isBool,
 }
 
 local PREFIX = "tminer."

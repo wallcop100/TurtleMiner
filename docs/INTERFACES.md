@@ -53,7 +53,9 @@ Two files: snapshot `.tm_state` (atomic: write `.tm_state.tmp`, delete old, move
 ```
 state.new(home, homeFacing, gps) -> st
 state.load() -> st|nil            -- tries .tm_state, then .tm_state.tmp; nil if neither parses
-state.save(st) -> ok              -- atomic snapshot; also truncates the journal and writes a "S" line
+state.save(st, fresh) -> ok       -- atomic snapshot; also truncates the journal and writes a "S" line
+                                  -- (keeps the last 1000 D/R/S lines as history; fresh=true keeps none:
+                                  --  used after a world rollback and on RESET_HOME)
 state.wipe()                      -- delete all state files (not settings)
 
 -- Journal (one line per record, space separated, numbers only after the tag):
@@ -73,6 +75,8 @@ nav.init(st, opts)
   opts.shouldAbort() -> bool         -- polled inside retry loops; true = return false,"abort"
   opts.onMove(st)                    -- called after every successful move (main uses for throttled status)
   opts.save()                        -- calls state.save(st)
+  opts.isKnownOpen(pos) -> bool      -- optional: cells known dug (main passes mine.isKnownOpen)
+  opts.knownBlock(pos) -> name|nil   -- optional: stable blocks known there (main: home storage, st.homeMarks)
 nav.forward(dig) / nav.up(dig) / nav.down(dig) -> ok, reason
   dig default true. Retries dig+attack. Gravel/sand/mobs: keep trying.
   Gives up with reason: "unbreakable" | "no_fuel" | "timeout" (60 s no progress) | "abort" | "blocked" (dig=false)
@@ -85,7 +89,9 @@ nav.goTo(target, opts) -> ok, reason
 nav.dist(a, b) -> manhattan int
 nav.fuelToHome(st) -> int            -- dist(pos, home)
 nav.recover(st) -> ok, reason        -- see below; called once at boot before anything moves
-nav.gpsLocate() -> Pos|nil           -- gps.locate(2), floored; nil if no GPS or st.gps false
+nav.gpsLocate(force) -> Pos|nil      -- gps.locate(2), rounded; nil if no GPS or st.gps false. After a failed
+                                     -- locate it returns nil at once until the turtle climbed 16 blocks or is
+                                     -- within 16 of home (force = try anyway). GPS = "available here now".
 nav.calibrateFacing() -> ok, reason  -- GPS only: move one block (forward, else back, else up+forward), compare
 ```
 
@@ -96,9 +102,12 @@ Every move/turn: `state.logIntent(op, fuelBefore)` → `turtle.x()` → on succe
 1. Read journal. Start from snapshot `st` and replay `D` lines to get the "file" state, plus the list of `D` entries (pos, facing, fuel) since the snapshot.
 2. If the last line is `I` with no matching `D`: the op may or may not have happened.
    - Move op, numeric fuel: if `turtle.getFuelLevel() == intentFuel - 1` it happened, apply it; if equal to `intentFuel`, it didn't.
-   - Turn op: undecidable from fuel. If GPS mode, step 4 fixes it. Else set `NEEDS_HELP` with reason `"facing unknown after crash"` unless the turn was the second half of a `turnAround` pattern the journal can disambiguate. (Keep it simple: report it.)
+   - Turn op: undecidable from fuel. The block name stored in the intent settles it when the front changed (stable solid involved). Otherwise the facing has 2 candidates (offsets in `st.facingCands`).
+   - Unlimited fuel move: intent block name, else the known-open map (front/up/down) when it tells the 2 candidate positions apart.
 3. **World rollback check** (numeric fuel only): if the world's fuel is higher than the fuel of the last `D`, the world rolled back. Walk `D` entries backwards (and the snapshot) to the most recent one whose fuel equals world fuel, adjusting for `R` lines (a refuel between that point and now means the world also lost that refuel). Use that entry's pos/facing. If none matches: GPS → step 4; else `NEEDS_HELP` "position unknown after crash".
-4. If `st.gps`: `gpsLocate()` overrides pos. If it differs from the replayed pos, emit an event. If facing is in doubt (step 2/3), `calibrateFacing()`.
+   A rollback marks `st.job.noGrid` and the final save is fresh (journal lines past the rollback point are no evidence).
+4. If `st.gps` and `gpsLocate()` gives a fix: it overrides pos (event if it differs); facing in doubt → `calibrateFacing()` (if that fails without a GPS correction: blind probe).
+   No fix (no GPS mode, or out of range underground): blind recovery. Facing in doubt → probe: 3 journaled right turns, inspect the 4 neighbours, keep the candidate facings under which no known-open cell (journal positions up to a rollback point + `opts.isKnownOpen`) shows a stable solid block and no `opts.knownBlock` cell shows a different stable block; exactly one = settled. Ambiguous in the home column below home: climb the open shaft to home and probe there. Else `NEEDS_HELP` "facing unknown after crash (probe: n facings fit)". A crash mid-probe restarts it (`st.facingUnknown` + `st.facingCands` are saved first).
 5. `state.save(st)`; return `true` or `false, reason`.
 
 ## inv.lua (WP-B)
@@ -141,6 +150,8 @@ mine.run() -> result, reason
   result: "full" (inventory) | "fuel" | "return" (command) | "stop" | "done" | "stuck"
   Handles: shaft descent, spine, mains, branches, ore checks on every step (inspect up, down, left, right, front),
   vein mining, trash dropping when nearly full. Advances st.job as it goes. Never goes home itself.
+mine.isKnownOpen(pos) -> bool              -- grid cell the saved job has completed (job.geom.y == TARGET_Y, no
+                                           -- job.noGrid); conservative, false = unknown. Used by nav.recover.
 mine.isOre(blockData) -> bool, family     -- family strips "deepslate_" so both variants count as one vein
 mine.vein(family) -> count                -- iterative DFS with an explicit stack, backtracks along its own path,
                                           -- cap cfg.VEIN_MAX blocks, honours ctl.check()
@@ -174,6 +185,10 @@ net.request(kind, body, replyKind, timeout) -> msg|nil   -- for home_get / updat
 - `UPDATE`: runs at the next home visit (REFUELING) or at once if `IDLE`/`DONE` at home; afterwards (or after the update reboot) the turtle continues with the phase it would have taken.
 - `SET HOME_Y` without GPS: refused (nack) unless at home; applied by shifting the frame, wiping the journal and saving a fresh snapshot.
 - `VERSION` is read from the first line of `miner.lua` at runtime.
+- Screen: top 5 lines of the terminal are a status block (phase+label, reason, pos/fuel, job/ores, key line), redrawn on phase change and every 10 s; `print` is redirected into a window below it. Skipped on screens smaller than 20x8 or without the window API.
+- `SURFACE_IF_LOST` (default false): after `nav.recover` fails at boot (not from home, its column or above home - 3), dig straight up via `nav.up` until 8 open cells in a row, a failed move (unbreakable/protected), fuel < 50, or 400 blocks; then `NEEDS_HELP` "lost: surfaced here, carry me home and press H twice" (`st.flags.surfaced`; `st.flags.surfacing` resumes the climb after a reboot). GPS-frame turtles try `gpsLocate` every 16 blocks and at the top; on a fix: calibrate, `RETURNING` with goTo order "xzy".
+- `st.homeMarks` = {[world facing] = storage block name} recorded after the home scan in UNLOADING (fed to nav as `knownBlock`). RESET_HOME clears it, `st.facingCands` and the surfacing flags, and saves fresh.
+- net: no modem (`net.online()` false) → `net.send` and the status timer do no work at all.
 
 ## installer / updater (WP-E)
 

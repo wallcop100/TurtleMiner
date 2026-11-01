@@ -136,6 +136,25 @@ Keyboard controls on the turtle's screen (work with or without a monitor):
 
 Change settings with `set tminer.<KEY> <value>` and reboot. Without a monitor you only see problems on the turtle's own screen; rebooting a turtle in NEEDS_HELP retries.
 
+### Blind turtles (no modem, no GPS)
+
+- **Screen**: the top 5 lines of the turtle's screen are a status block, redrawn on every phase change and every 10 s; log lines scroll below it:
+
+  ```
+  MINING                            T1
+  (reason, e.g. why it needs help)
+  pos -2,-58,-14 f1  fuel 4812
+  job c0 b3R s7  ores 42
+  --------------------- keys: R P B S H ?
+  ```
+  `pos` is relative to home (home = 0,HOME_Y,0, `f0` = the way it faced at setup). `LOST` after the position means it no longer trusts it.
+- **Crash during a turn** (chunk unloaded, server stopped): the turtle can't tell from fuel whether the turn happened. It turns round once on the spot, looks at all four neighbours and compares them with the cells it knows are open: the tunnel cells its job has finished, every cell in its move journal (always including the one it came from), and the storage next to home. Only when exactly one facing fits does it carry on; caves, ore veins and water/lava count as "unknown", never as evidence. A turn crash in the shaft makes it climb home (vertical moves need no facing) and check against the chest there. In a simulated 2-corridor run, 442 of 448 turn crashes now recover on their own (26 before); the 6 left are turns during the very first home scan, before it has seen its chest.
+- **Unlimited fuel**: a move cut off by a crash in open tunnel is settled the same way when the known cells around the two possible spots differ (e.g. it had just moved into fresh rock); walking back through its own tunnel it still asks for help.
+- **Still lost?** `NEEDS_HELP` "facing unknown" / "position unknown": carry it home, face it the setup way, press `H` twice. With `SURFACE_IF_LOST` on (off by default) a turtle whose position is lost digs straight up instead (never chests, computers or other protected blocks) until it has passed 8 open cells, hits something unbreakable or protected, or its fuel would drop below 50, and waits there with "lost: surfaced here, carry me home and press H twice". It never does this from home, its shaft column or above home. A GPS turtle tries GPS every 16 blocks on the way up and, once it gets a fix, goes home by itself.
+- **Speed**: without a modem nothing waits for the network: no status messages are built, `home_get`, GPS and the update check return at once.
+
+GPS turtles underground: wireless modems reach only 64 blocks (more above Y 96), so at mining depth a GPS turtle usually has no fix. It then recovers exactly like a blind turtle, and after a failed `gps.locate` it doesn't try again (2 s each) until it has climbed 16 blocks or is near home.
+
 ## Configuration
 
 Settings live in the turtle's settings file under `tminer.<KEY>`. Change them with `install`, `set tminer.<KEY> <value>` on the turtle, or the monitor's SET... button (keys marked **remote**; the turtle applies them at once and acks or refuses). Restart the miner after a local `set`.
@@ -163,6 +182,7 @@ Settings live in the turtle's settings file under `tminer.<KEY>`. Change them wi
 | `STUCK_TIMEOUT` | 60 | no | Seconds without progress before a move gives up |
 | `HELP_RETRY` | 30 | no | Seconds between automatic retries while `NEEDS_HELP` ("stuck" retries wait 4x this) |
 | `AUTO_UPDATE` | true | yes | Check for updates at boot when at home |
+| `SURFACE_IF_LOST` | false | yes | Position lost after a crash: dig straight up to the surface and wait there (see "Blind turtles") |
 
 Grid settings (`BRANCH_LENGTH`, `BRANCH_SPACING`, `MAIN_LENGTH`) are frozen into the job when it starts; new values apply after `RESET_JOB`. `MAX_CORRIDORS`, `TARGET_Y` and `FOCUS` apply at once.
 
@@ -191,7 +211,8 @@ Grid settings (`BRANCH_LENGTH`, `BRANCH_SPACING`, `MAIN_LENGTH`) are frozen into
 | stuck: unbreakable at x,y,z | Bedrock or a protected block in the way. Change `TARGET_Y` or send `RESET_JOB`, then `RESUME` |
 | no fuel / `no_fuel` | Bring fuel to the turtle (or to its chest at home), then `RESUME`. When stranded on the way home it also burns its `FUEL_KEEP` reserve |
 | stuck: timeout ... retry n/5 | Something kept blocking it for 60 s (mob, player, other turtle). It goes back to work by itself every 2 minutes, 5 times; after that ("gave up") clear the way and `RESUME` |
-| facing unknown after crash | Crashed mid-turn without GPS. Carry it home, face it the setup way, send `RESET_HOME` |
+| facing unknown after crash (probe: n facings fit) | Crashed mid-turn without a GPS fix and the four neighbours did not tell which way it faces (open cave, unknown cells). Carry it home, face it the setup way, press `H` twice or send `RESET_HOME` |
+| lost: surfaced here, carry me home and press H twice | `SURFACE_IF_LOST` climbed it to the surface. Do what it says |
 | position unknown after crash | Same: put it at home and send `RESET_HOME` |
 | state lost: send RESET_HOME here or carry to home | GPS turtle lost its state files and is far from the home the server remembers. If this spot is its new home, send `RESET_HOME`. If not, carry it to its old home: it notices and carries on |
 | state lost: place at home and send RESET_HOME | Same without GPS: put it at home, send `RESET_HOME` |

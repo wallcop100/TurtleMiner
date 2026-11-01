@@ -1,4 +1,4 @@
--- Version: 1.0.2
+-- Version: 1.0.3
 -- TurtleMiner network layer (TMINER protocol v1, see docs/PROTOCOL.md).
 -- One rednet wrapper for the whole turtle. Never moves the turtle, never relays.
 -- Works offline: with no modem every send is a silent no-op.
@@ -89,6 +89,7 @@ function net.setValidator(fn) validator = fn end
 -- Sending --------------------------------------------------------------------
 
 function net.send(kind, to, body)
+    if not net.online() then return false end   -- blind turtle: no work at all
     seq = seq + 1
     local msg = {}
     if type(body) == "table" then
@@ -97,7 +98,6 @@ function net.send(kind, to, body)
     msg.v, msg.kind, msg.from = 1, kind, myId
     msg.to = to or "server"
     msg.boot, msg.seq, msg.ts, msg.hops = bootId, seq, os.epoch("utc"), 0
-    if not net.online() then return false end
     -- Broadcast so every server (and relay) hears it; `to` says who it's for.
     local ok = pcall(rednet.broadcast, msg, PROTO)
     return ok
@@ -216,6 +216,7 @@ local function interval()
 end
 
 local function sendStatus(getStatus)
+    if not net.online() then return end   -- nobody to tell: don't build the status table
     local ok, st = pcall(getStatus)
     if ok and type(st) == "table" then net.send("status", "server", st) end
 end

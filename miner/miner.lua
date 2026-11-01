@@ -1,4 +1,4 @@
--- Version: 1.2.2
+-- Version: 1.3.0
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
@@ -51,6 +51,82 @@ local homeScanned    = false
 local bootFuel       = turtle.getFuelLevel()
 local homeOverhead   = 0      -- fuel spent at home after boot (facing calibration) before leaving
 local noRetreat      = false  -- next goHome skips mine.retreat (home adopted from the server, no tunnels known)
+local homeOrder      = nil    -- next goHome's nav.goTo axis order (after surfacing: "xzy")
+
+-- Screen ---------------------------------------------------------------------
+-- The turtle's own terminal (39x13): a fixed status block on top (phase, reason, position,
+-- fuel, job, ores), log lines scroll in a window below it. print() is redirected into that
+-- window, so nothing scrolls the status away. Redrawn on every phase change and every
+-- SCREEN_EVERY seconds. Falls back to plain printing when the screen is too small or the
+-- window API is missing.
+
+local SCREEN_EVERY = 10
+local STATUS_ROWS = 5           -- 4 status lines + 1 separator
+local screen = nil              -- { win = status window, w = width } when active
+
+local function setupScreen()
+    if not (term and term.current and window and window.create) then return end
+    local ok = pcall(function()
+        local parent = term.current()
+        local w, h = parent.getSize()
+        if w < 20 or h < STATUS_ROWS + 3 then return end
+        parent.clear()
+        local top = window.create(parent, 1, 1, w, STATUS_ROWS)
+        local logWin = window.create(parent, 1, STATUS_ROWS + 1, w, h - STATUS_ROWS)
+        logWin.setCursorPos(1, 1)
+        term.redirect(logWin)
+        screen = { win = top, w = w }
+    end)
+    if not ok then screen = nil end
+end
+
+local function fit(text, w)
+    text = tostring(text or "")
+    if #text > w then return string.sub(text, 1, w) end
+    return text .. string.rep(" ", w - #text)
+end
+
+local function drawStatus()
+    if not screen then return end
+    pcall(function()
+        local win, w = screen.win, screen.w
+        local s = st
+        local fuel = turtle.getFuelLevel()
+        local lines = {}
+        local label = os.getComputerLabel() or ("miner-" .. os.getComputerID())
+        local phase = s and s.phase or "BOOT"
+        lines[1] = phase .. string.rep(" ", math.max(1, w - #phase - #label)) .. label
+        lines[2] = (s and s.reason) and tostring(s.reason) or ""
+        if s and type(s.pos) == "table" then
+            lines[3] = "pos " .. s.pos.x .. "," .. s.pos.y .. "," .. s.pos.z .. " f" .. tostring(s.facing)
+                .. (s.lost and " LOST" or "") .. "  fuel " .. tostring(fuel)
+            local j = type(s.job) == "table" and s.job or {}
+            local ores = type(s.stats) == "table" and s.stats.ores or 0
+            lines[4] = "job c" .. tostring(j.corridor or 0) .. " b" .. tostring(j.branch or 0)
+                .. tostring(j.side or "L") .. " s" .. tostring(j.step or 0) .. "  ores " .. tostring(ores)
+        else
+            lines[3] = "fuel " .. tostring(fuel)
+            lines[4] = ""
+        end
+        lines[5] = string.rep("-", w - 18) .. " keys: R P B S H ?"
+        if win.isColor and win.isColor() and colors then
+            win.setTextColor(phase == "NEEDS_HELP" and colors.red or colors.yellow)
+        end
+        for i = 1, STATUS_ROWS do
+            win.setCursorPos(1, i)
+            if i == 2 and colors and win.isColor and win.isColor() then win.setTextColor(colors.white) end
+            win.write(fit(lines[i], w))
+        end
+        if colors and win.isColor and win.isColor() then win.setTextColor(colors.white) end
+    end)
+end
+
+local function screenLoop()
+    while true do
+        sleep(SCREEN_EVERY)
+        drawStatus()
+    end
+end
 
 -- Helpers --------------------------------------------------------------------
 
@@ -116,6 +192,7 @@ local function setPhase(p, reason)
     lastPhase = p
     save()
     net.statusNow()
+    drawStatus()
     log(p .. (reason and (": " .. tostring(reason)) or ""))
 end
 
@@ -207,7 +284,7 @@ local function doResetHome(params)
     if st.lost then
         -- Position was unknown; the operator says we're at home. Keep frame and job.
         if st.gps then
-            local p = nav.gpsLocate()
+            local p = nav.gpsLocate(true)
             if p then st.pos = copyPos(p); st.home = copyPos(p) else st.pos = copyPos(st.home) end
         else
             st.pos = copyPos(st.home)
@@ -216,7 +293,7 @@ local function doResetHome(params)
         st.homeFacing = st.facing
     else
         if st.gps then
-            local p = nav.gpsLocate()
+            local p = nav.gpsLocate(true)
             if p then st.pos = copyPos(p) end
         end
         st.home = copyPos(st.pos)
@@ -226,10 +303,17 @@ local function doResetHome(params)
     end
     st.lost = nil
     st.facingUnknown = nil
+    st.facingCands = nil
+    st.homeMarks = nil       -- rescanned at the next UNLOADING
+    homeScanned = false
+    st.flags.surfaced, st.flags.surfacing = nil, nil
     helpRetry = nil
     noRetreat = false
+    homeOrder = nil
     req.homeReset = true
-    save()
+    -- The journal's history names cells around where the turtle believed it was; after
+    -- "this spot is home" (maybe carried here) they are no evidence for the probe any more.
+    state.save(st, true)
     sendHomeSave()
     net.event("info", "home reset to " .. st.home.x .. "," .. st.home.y .. "," .. st.home.z .. " facing " .. st.homeFacing)
 end
@@ -369,15 +453,16 @@ local function goHome()
                 return false, "stuck: " .. tostring(rdetail or "retreat blocked")
             end
         end
-        local ok, reason = nav.goTo(st.home)
+        local ok, reason = nav.goTo(st.home, { order = homeOrder })
         if not ok and reason == "no_fuel" then
             -- Stranded: burn anything, including the FUEL_KEEP reserve (older inv ignores opts).
             pcall(inv.refuel, inv.fuelNeeded(st), { emergency = true })
-            ok, reason = nav.goTo(st.home)
+            ok, reason = nav.goTo(st.home, { order = homeOrder })
         end
         if not ok then return false, reason end
     end
     noRetreat = false
+    homeOrder = nil
     nav.face(st.homeFacing)
     return true
 end
@@ -477,7 +562,21 @@ end
 
 H.UNLOADING = function()
     if not atHome() then return "RETURNING" end
-    if not homeScanned then inv.scanHome(); homeScanned = true end
+    if not homeScanned then
+        local h = inv.scanHome()
+        homeScanned = true
+        -- Remember which way the home storage is (world facing -> block name): a turn crash at
+        -- home or in the shaft can then be settled by probing at home (nav.recover).
+        local marks = {}
+        local OFF = { front = 0, right = 1, back = 2, left = 3 }
+        for side, info in pairs(type(h) == "table" and h.sides or {}) do
+            if OFF[side] and type(info) == "table" and type(info.name) == "string" then
+                marks[(st.homeFacing + OFF[side]) % 4] = info.name
+            end
+        end
+        st.homeMarks = marks
+        save()
+    end
     local ok, reason = inv.unload()
     if ok then return "REFUELING" end
     helpRetry = function()
@@ -647,7 +746,18 @@ function ctl.event(level, text) net.event(level, text) end
 
 local function initModules()
     nav.init(st, { shouldAbort = shouldAbort, onMove = onMove, save = save, cfg = cfg,
-                   onEvent = function(level, text) net.event(level, text) end })
+                   onEvent = function(level, text) net.event(level, text); log(text) end,
+                   isKnownOpen = function(p) return mine.isKnownOpen(p) end,
+                   knownBlock = function(p)
+                       -- storage next to home, recorded by the last home scan
+                       local h = st.home
+                       if type(st.homeMarks) ~= "table" or p.y ~= h.y then return nil end
+                       for d, name in pairs(st.homeMarks) do
+                           local v = ({ [0] = { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } })[tonumber(d)]
+                           if v and p.x == h.x + v[1] and p.z == h.z + v[2] then return name end
+                       end
+                       return nil
+                   end })
     inv.init(st, cfg, nav)
     mine.init(st, cfg, nav, inv, ctl)
 end
@@ -664,6 +774,62 @@ local function calibrateOrHelp()
         end
     end
     return false, why
+end
+
+-- SURFACE_IF_LOST: position lost after a crash. Dig straight up (nav.up never digs protected
+-- blocks) until SURFACE_AIR open cells in a row were passed, an unbreakable/protected block is
+-- above, or fuel would drop below SURFACE_MIN_FUEL; then wait for a person. A GPS turtle tries
+-- GPS every 16 blocks on the way up (underground it is out of modem range) and, with a fix,
+-- calibrates its facing and goes home on its own. Never starts from home, the shaft column or
+-- above home (it would dig through the base). Returns nextPhase, reason, or nil (not done).
+local SURFACED = "lost: surfaced here, carry me home and press H twice"
+local SURFACE_AIR, SURFACE_MIN_FUEL, SURFACE_MAX = 8, 50, 400
+
+-- GPS fix while surfacing: position known again; calibrate facing and go home across at this
+-- height, then down. Returns true when the turtle can go home on its own.
+local function surfaceFix(force)
+    local g = nav.gpsLocate(force)
+    if not g then return false end
+    st.pos = copyPos(g)
+    st.lost = nil
+    st.flags.surfacing = nil
+    if not calibrateOrHelp() then return false end
+    noRetreat, homeOrder = true, "xzy"
+    save()
+    net.event("info", "lost turtle surfaced into GPS range at " .. g.x .. "," .. g.y .. "," .. g.z)
+    log("GPS fix at " .. g.x .. "," .. g.y .. "," .. g.z .. ": going home")
+    return true
+end
+
+local function surfaceIfLost()
+    if not cfg.SURFACE_IF_LOST or not st.lost or st.flags.surfaced then return nil end
+    if not st.flags.surfacing then
+        local p, h = st.pos, st.home
+        if p.y >= h.y - 3 or (p.x == h.x and p.z == h.z) or nav.dist(p, h) <= 3 then return nil end
+        st.flags.surfacing = true   -- a reboot mid-climb carries on climbing
+        save()
+    end
+    log("lost: climbing to the surface")
+    local HOME_GO = "surfaced into GPS range, going home"
+    local air, moves, why = 0, 0, nil
+    while air < SURFACE_AIR and moves < SURFACE_MAX do
+        local f = turtle.getFuelLevel()
+        if f ~= "unlimited" and f - 1 < SURFACE_MIN_FUEL then why = "fuel low"; break end
+        local blocked = turtle.detectUp()
+        local ok, r = nav.up(true)
+        if not ok then why = tostring(r); break end
+        moves = moves + 1
+        if blocked then air = 0 else air = air + 1 end
+        if st.gps and moves % 16 == 0 and surfaceFix() then return "RETURNING", HOME_GO end
+    end
+    if st.gps and surfaceFix(true) then return "RETURNING", HOME_GO end
+    st.flags.surfacing = nil
+    st.flags.surfaced = true
+    st.lost = SURFACED
+    helpRetry = nil
+    save()
+    log("surfaced after " .. moves .. " blocks" .. (why and (" (" .. why .. ")") or ""))
+    return "NEEDS_HELP", SURFACED
 end
 
 -- Returns the first phase to run, reason.
@@ -686,6 +852,9 @@ local function boot()
         if not ok then
             -- nav.recover already set st.lost / NEEDS_HELP; keep its reason.
             st.lost = st.lost or tostring(reason or "position unknown after crash")
+            local sp, sr = surfaceIfLost()
+            if sp then return sp, sr end
+            if st.lost == SURFACED then return "NEEDS_HELP", SURFACED end
             return "NEEDS_HELP", tostring(reason or "position unknown after crash")
                 .. "; place at home and send RESET_HOME"
         end
@@ -841,6 +1010,7 @@ local function keyboard()
         elseif ch == "p" then net.pushLocal("PAUSE"); print("> PAUSE")
         elseif ch == "b" then net.pushLocal("RETURN_HOME"); print("> RETURN_HOME")
         elseif ch == "s" then
+            drawStatus()
             print(("> %s %s | pos %d,%d,%d | fuel %s"):format(tostring(st and st.phase), tostring(st and st.reason or ""),
                 st and st.pos.x or 0, st and st.pos.y or 0, st and st.pos.z or 0, tostring(turtle.getFuelLevel())))
         elseif ch == "h" then
@@ -857,5 +1027,7 @@ local function keyboard()
     end
 end
 
+setupScreen()
+drawStatus()
 print(KEYHELP)
-parallel.waitForAny(worker, function() net.run(getStatus) end, keyboard)
+parallel.waitForAny(worker, function() net.run(getStatus) end, keyboard, screenLoop)

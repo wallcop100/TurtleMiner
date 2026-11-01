@@ -35,7 +35,7 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 
 | WP | Status | Notes |
 |----|--------|-------|
-| CM-1 GPS-mode turtles recover blind underground; no repeated GPS timeouts | DOING | with blind-turtle agent |
+| CM-1 GPS-mode turtles recover blind underground; no repeated GPS timeouts | DONE | a4acfb4, scenario 40 |
 | CM-2 Store-and-forward commands on server | TODO | after blind-turtle agent |
 | CM-3 `away` + ETA, overdue-only alerts | TODO | |
 | CM-4 Catch-up event log | TODO | |
@@ -80,11 +80,11 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 
 | # | Sev | Finding | Owner | Status |
 |---|-----|---------|-------|--------|
-| 1 | HIGH | Crash during a turn strands turtle (no GPS always; GPS calibrate can't turn/dig in 1x1 tunnel) | X + Y | DONE (X GPS calibrate + inspect; Y fewer turns 274→224; residual: no-GPS turn crash facing solid wall → RESET_HOME) |
+| 1 | HIGH | Crash during a turn strands turtle (no GPS always; GPS calibrate can't turn/dig in 1x1 tunnel) | X + Y + blind | DONE (X GPS calibrate + inspect; Y fewer turns 274→224; blind: no-GPS/no-fix probe against the known-open map + home chest, sweep 26/448 → 442/448; residual: turns of the very first home scan, symmetric caves → NEEDS_HELP) |
 | 2 | HIGH | `wget run install` can't require its modules; fallback startup never auto-updates | coordinator | DONE (package.path, updater replaces fallback startup, README uses wget + install) |
 | 3 | HIGH/MED | Chest on modem side invisible → loot into fuel chest / fuel chest unused | Y | DONE (Y) |
 | 4 | MED | Crash between refuel and journal R line → position unknown at home | X + Y | DONE (X+Y, scenario 26: 18 crash cases recover) |
-| 5 | MED | Unlimited fuel + no GPS → every dangling move intent = NEEDS_HELP | X | PARTIAL (air→air move without fuel/GPS still NEEDS_HELP) |
+| 5 | MED | Unlimited fuel + no GPS → every dangling move intent = NEEDS_HELP | X + blind | PARTIAL (blind: air→air settled when the known-open map tells P and P+dir apart, e.g. moved into fresh rock; walking back through own tunnel still NEEDS_HELP) |
 | 6 | MED | FUEL_KEEP reserve never burned even when stranded | Y | DONE (Y + miner wiring) |
 | 7 | MED | DONE can't be left by raising MAX_CORRIDORS; no RESET_JOB button | Z | DONE (Z) |
 | 8 | MED | Monitor/pocket can only SET TARGET_Y and FOCUS | Z | DONE (Z, SET screen all 16 keys) |
@@ -126,6 +126,11 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 18 | 1.18 ore heights: FOCUS diamond at -58; SET TARGET_Y 16 + iron mid-job | DONE | PASS |
 | 19 | Cliffs: home at Y 150, 208-block shaft, exact fuel, never strands; negative HOME_Y | DONE | PASS (reported need now includes fuel boot spends on GPS calibration) |
 | 20 | Cave mobs (leave vs never leave → timeout NEEDS_HELP) and buried ore found | DONE | PASS (attacks no longer reset stuck timer) |
+| 36 | Blind turn crash in a 1x1 tunnel settled by probing (incl. crashes mid-probe); symmetric cave → NEEDS_HELP; unlimited-fuel moves | DONE | PASS |
+| 37 | Crash on every turn of a standard no-GPS run (reviewer repro) | DONE | PASS (218/224; 2 corridors 442/448, before 26/448) |
+| 38 | SURFACE_IF_LOST: climbs to 8 open cells, off = stays, fuel floor 50, chest above kept | DONE | PASS |
+| 39 | Offline boot: no waits (first op at 0 s); 39x13 status block | DONE | PASS |
+| 40 | GPS only above Y 0: turn crash at depth recovers blind; no repeated locate waits; lost + SURFACE_IF_LOST gets a fix and goes home | DONE | PASS |
 
 ## In-game acceptance (you)
 
@@ -171,3 +176,5 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-01 | coordinator | Offline use: keyboard controls on the turtle (R/P/B/S/H) so no monitor is needed for RESUME/RESET_HOME. Scenario 35 (no modem, keys) added. Suite 36/36. |
 | 2026-11-01 | coordinator | Modem research (CC:Tweaked source): basic 64 blocks below Y 96, max(sender,receiver), ender = delivered if either end is ender. docs/COMMS.md written; CM-1..CM-5 planned; army plan updated for out-of-range reservations. |
 | 2026-11-01 | coordinator | Clarified: general-purpose tool, no assumed setup. COMMS.md rule 0: everything detected at runtime, settings only override. |
+| 2026-11-01 | blind agent | Blind turtle: turn crashes without a GPS fix settled by probing the 4 neighbours against the known-open map (journal cells, finished grid cells, home chest; shaft → climb home). Reviewer sweep 26/448 → 442/448. Unlimited-fuel moves settled when the map tells them apart. GPS turtles out of range fall back to blind recovery, failed locates cached. SURFACE_IF_LOST. No network work offline. 39x13 status screen. Scenarios 36-40. Suite 41/41. |
+| 2026-11-01 | coordinator | Blind-turtle work merged (a4acfb4): no-GPS turn-crash recovery 26/448 → 442/448, SURFACE_IF_LOST, status screen. Suite 41/41. Starting CM-2..CM-5. |
