@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.1.1
 -- TurtleMiner server: ONE program for every server PC (docs/CLUSTER_GPS_PLAN.md section 1).
 -- Each PC works out its roles at boot and every 60 s (and when a peripheral changes):
 --   monitor attached / pocket      -> UI (keyboard first; touch and mouse are extras)
@@ -180,5 +180,10 @@ end
 T.M = T
 
 if args[1] == "--lib" then return T end
+do  -- No mining network yet: ask on this computer's screen before starting.
+    package.path = "/?.lua;/?;" .. package.path
+    local okJ, J = pcall(require, "tmjoin")
+    if okJ and J.bootPrompt then J.bootPrompt() end
+end
 T.init({ monitor = args[1], scale = tonumber(args[2]) })
 T.run()

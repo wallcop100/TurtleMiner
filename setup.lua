@@ -1,4 +1,4 @@
--- Version: 1.4.0
+-- Version: 1.4.1
 -- One-shot downloader. Usage (in CC, needs the HTTP API enabled):
 --   wget run <BASE>/setup.lua server    -- any server PC: tminer_server + update files (/files/)
 --   wget run <BASE>/setup.lua monitor   -- server PC without update files (same program)
@@ -105,6 +105,7 @@ if role == "network" then
             get("miner/" .. f, f)
         end
     end
+    if http and not fs.exists("setup.lua") then get("setup.lua", "setup.lua") end
     if network(true) then print("Reboot to use it.") end
     return
 end
@@ -165,6 +166,8 @@ else
 end
 
 if not ok then print("Some files failed; check the errors above."); return end
+-- Keep a copy of setup itself, so `setup network` (and re-running setup) works later.
+if http then get("setup.lua", "setup.lua") end
 if not network(false) then print("Not finished: no mining network. Run `setup network`."); return end
 if role == "turtle" then print("Now run: install") end
 print("Done. Reboot to start.")

@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- TurtleMiner mining network: create / join (docs/MESH_UPDATE_PLAN.md section 1). Used by
 -- install (turtles), setup.lua (computers, pockets, relays) and the server UI.
 --   * create: 4 random words from tmwords (about 40 bits) + optional network name; the key is
@@ -261,6 +261,33 @@ function J.ensure(opts)
 end
 
 -- Parse CLI flags shared by install and setup into J.ensure options. Returns opts, rest.
+-- At boot: a device with no mining network asks on its own screen.
+-- opts.timeout (seconds): give up and carry on offline (turtles must not hang forever).
+-- Returns the network or nil.
+function J.bootPrompt(opts)
+    opts = opts or {}
+    local have = J.load()
+    if have then return have end
+    if not term or not read then return nil end
+    print("")
+    print("This device has no mining network yet.")
+    if opts.timeout then
+        print("Press any key within " .. opts.timeout .. " s to set it up (else it runs offline).")
+        local pressed = false
+        parallel.waitForAny(function() os.pullEvent("key"); pressed = true end,
+            function() sleep(opts.timeout) end)
+        if not pressed then print("Skipped: running offline. Run 'setup network' any time."); return nil end
+        sleep(0)  -- let the key's char event pass
+    end
+    local ok, n, how = pcall(J.ensure, { change = true })
+    if ok and n then
+        print("Joined mining network '" .. tostring(n.name) .. "' (" .. tostring(how) .. ").")
+        return n
+    end
+    printError("No network: " .. tostring(ok and how or n) .. ". Run 'setup network' to try again.")
+    return nil
+end
+
 function J.parseArgs(args)
     local o, rest = {}, {}
     local i = 1

@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.1.1
 -- TurtleMiner relay (docs/COMMS.md rule 5). Run on any plain computer: opens every modem
 -- (ender, basic wireless, wired) and relays TMINER traffic between them, with dedupe and a
 -- hop limit. Nothing to configure:
@@ -29,6 +29,11 @@ local R = {
 local function now() return os.epoch("utc") end
 
 local crypto, signer, netName
+do  -- No mining network yet: ask on this computer's screen first.
+    package.path = "/?.lua;/?;" .. package.path
+    local okJ, J = pcall(require, "tmjoin")
+    if okJ and J.bootPrompt then J.bootPrompt() end
+end
 do
     local ok, m = pcall(require, "tmcrypto")
     if not ok or type(m) ~= "table" then

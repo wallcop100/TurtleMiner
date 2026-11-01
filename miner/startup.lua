@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.1.1
 -- TurtleMiner turtle startup. Checks for updates only when the turtle is at
 -- home (or has no state yet), reboots at most once after an update, then
 -- starts the miner. Nothing here ever waits for input.
@@ -82,4 +82,10 @@ elseif autoUpdate() then
     end
 end
 
+-- No mining network yet: offer to set one up (60 s, then the turtle mines offline).
+do
+    local okJ, J = pcall(require, "tmjoin")
+    local hasModem = peripheral and peripheral.find and peripheral.find("modem") ~= nil
+    if okJ and J.bootPrompt and hasModem then J.bootPrompt({ timeout = 60 }) end
+end
 shell.run("miner")
