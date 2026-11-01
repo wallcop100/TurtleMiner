@@ -1,4 +1,4 @@
--- Version: 1.0.2
+-- Version: 1.1.0
 -- Scenario helpers: pass/fail/skip plumbing, crash predicates, a fake TMINER
 -- server (virtual rednet node), truth-vs-belief watchers and the standard
 -- "turtle at home with a chest behind it" setup.
@@ -181,6 +181,9 @@ end
 ---------------------------------------------------------------------------
 -- fake TMINER server (virtual rednet node, no coroutine needed)
 ---------------------------------------------------------------------------
+-- opts: id, pos + modem ("basic"|"ender"; default: no pos, ender = in range of everyone, as
+-- before range limits existed), beacon (seconds between empty `fleet` heartbeats, default 5;
+-- false = none). Turtles count a server heard in the last 30 s as "in contact".
 function H.server(opts)
     opts = opts or {}
     local srv = {
@@ -200,7 +203,8 @@ function H.server(opts)
     local function envelope(kind, to, body)
         srv.seq = srv.seq + 1
         local m = { v = 1, kind = kind, from = srv.id, to = to, boot = srv.boot, seq = srv.seq,
-                    ts = math.floor(sim.BASE_EPOCH + sim.now * 1000), hops = 0 }
+                    ts = math.floor(sim.BASE_EPOCH + sim.now * 1000), hops = 0, hop = 0, ohop = 0,
+                    mk = opts.modem or "ender" }
         for k, v in pairs(body or {}) do m[k] = v end
         return m
     end
@@ -258,7 +262,12 @@ function H.server(opts)
         elseif k == "event" then
             srv.events[#srv.events + 1] = { time = sim.now, from = from, msg = msg }
         end
-    end)
+    end, { pos = opts.pos, kind = opts.modem or "ender" })
+    if opts.beacon ~= false then
+        sim.every(opts.beacon or 5, function()
+            srv.send("all", "fleet", { turtles = {}, server = { id = srv.id, label = "simsrv" } }, true)
+        end, 0)
+    end
     return srv
 end
 
@@ -350,7 +359,7 @@ function H.minerSetup(opts)
     end
     local t = sim.turtle(w, { id = opts.id or 1, label = opts.label or ("T" .. (opts.id or 1)), pos = home,
         facing = facing, fuel = opts.fuel or 5000, gps = opts.gps, inventory = opts.inventory,
-        modem = opts.modem, strictTerm = opts.strictTerm })
+        modem = opts.modem, equip = opts.equip, strictTerm = opts.strictTerm })
     t.computer.label = opts.label or ("T" .. t.id)
     ctx.t = t
     -- Without GPS the miner needs HOME_Y (the installer asks for it); TARGET_Y is world Y.
@@ -750,6 +759,66 @@ function H.mineDriver(opts)
         end
     end
     return ctx
+end
+
+---------------------------------------------------------------------------
+-- modem range scenarios: the real central_monitor on a sim computer
+---------------------------------------------------------------------------
+-- opts: id (100), pos, modemKind ("basic"), modems (list, overrides modemKind).
+-- Returns srv = {c, M (central_monitor module), rec(id), log()}; M runs in the computer.
+function H.monitorComputer(opts)
+    opts = opts or {}
+    local f = assert(io.open(ROOT .. "/servers/central_monitor.lua", "rb"))
+    local src = f:read("a")
+    f:close()
+    local c = sim.computer({ id = opts.id or 100, label = opts.label or "srv", pos = opts.pos,
+        modemKind = opts.modemKind or "basic", modems = opts.modems })
+    c.fs:write("central_monitor.lua", src)
+    local srv = { c = c }
+    sim.boot(c, function(G)
+        local fn = assert(G.loadfile("central_monitor.lua", nil, G))
+        local M = fn("--lib")
+        srv.M = M
+        M.init({ monitor = "none", noDisplay = true })
+        M.run()
+    end, { background = true })
+    sim.run({ maxTime = 0.2 })
+    H.check(srv.M ~= nil, "central_monitor did not start: %s", tostring(c.err))
+    function srv.rec(id) return srv.M.S.turtles[id] end
+    function srv.logText() return table.concat(srv.M.S.log, "\n") end
+    return srv
+end
+
+-- A program that runs the real miner/net.lua only (no mining): status every interval,
+-- relays like a miner would. getStatus may be replaced via t.computer.statusFn.
+function H.netOnly(t, label)
+    return sim.boot(t, function(G, c)
+        local net = G.require and G.require("net") or nil
+        if not net then
+            local fn = assert(G.loadfile("net.lua", nil, G))
+            net = fn()
+        end
+        c.net = net
+        net.init({ STATUS_INTERVAL = 10 })
+        net.run(function() return { label = label or ("T" .. c.id), phase = "MINING", pos = sim.copyPos(t.pos) } end)
+    end, { background = true })
+end
+
+-- Truth from the turtle itself: the phase in its saved state file.
+function H.savedPhase(t)
+    local s = t.fs:read(".tm_state")
+    local st = s and sim.textutils.unserialize(s)
+    return type(st) == "table" and st.phase or nil, type(st) == "table" and st.reason or nil
+end
+
+-- Messages transmitted by computer id (originals and relays) in [t0, t1].
+function H.sentBy(id, t0, t1, kind)
+    local n = 0
+    for _, e in ipairs(sim.net.log) do
+        if e.from == id and e.time >= (t0 or 0) and e.time <= (t1 or math.huge)
+            and (kind == nil or (type(e.msg) == "table" and e.msg.kind == kind)) then n = n + 1 end
+    end
+    return n
 end
 
 return H

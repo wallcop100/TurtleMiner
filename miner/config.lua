@@ -1,4 +1,4 @@
--- Version: 1.2.0
+-- Version: 1.3.0
 -- TurtleMiner configuration. Do not edit values here; use `install` or
 -- `set tminer.<KEY> <value>` on the turtle, or the SET command from the monitor.
 
@@ -46,6 +46,9 @@ config.DEFAULTS = {
     STUCK_TIMEOUT   = 60,    -- seconds without progress before a move gives up
     HELP_RETRY      = 30,    -- seconds between automatic retries while NEEDS_HELP
     AUTO_UPDATE     = true,  -- check for updates at boot when at home
+    RELAY           = "auto",-- relay other turtles' TMINER traffic: "auto" (ender modem: always;
+                             -- basic: when it moves a message closer to its target), "on", "off"
+    MODEM           = "auto",-- own modem kind, normally detected: "auto" | "basic" | "ender"
 
     -- Recovery
     SURFACE_IF_LOST = false, -- position lost after a crash: dig straight up (never protected

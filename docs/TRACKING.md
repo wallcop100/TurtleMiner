@@ -36,10 +36,10 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | WP | Status | Notes |
 |----|--------|-------|
 | CM-1 GPS-mode turtles recover blind underground; no repeated GPS timeouts | DONE | a4acfb4, scenario 40 |
-| CM-2 Store-and-forward commands on server | TODO | after blind-turtle agent |
-| CM-3 `away` + ETA, overdue-only alerts | TODO | |
-| CM-4 Catch-up event log | TODO | |
-| CM-5 Bridge: ender nodes always relay, turtle distance relay, `relay` program | TODO | |
+| CM-2 Store-and-forward commands on server | DONE | queued per turtle, sent when heard, retried until acked, 24 h expiry / replaced by same kind; pocket path too. Scenario 41 |
+| CM-3 `away` + ETA, overdue-only alerts | DONE | ETA from job size + measured trips (st.stats) + fuel; AWAY "back by ~hh:mm", OVERDUE at 50% + 2 min. Scenario 42 |
+| CM-4 Catch-up event log | DONE | max 50, coalesced, `catchup` on contact, merged by original time; event ids dedupe. Scenario 43 |
+| CM-5 Bridge: ender nodes always relay, turtle distance relay, `relay` program | DONE | modem kind detected, `hop` in every message, contact = heard in 30 s; mesh across wired/wireless/ender on every computer; `setup relay`. Scenarios 44-46 |
 
 ## Cluster + GPS (see CLUSTER_GPS_PLAN.md)
 
@@ -193,3 +193,5 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-01 | coordinator | Cluster + GPS phase planned (CLUSTER_GPS_PLAN.md). Source check: gps host needs a wireless modem, wired can't serve GPS, 3 hosts = ambiguous fix → need >= 4 wireless hosts. |
 | 2026-11-01 | coordinator | GPS setup decisions: offered not required; quiet unless >= 4 valid hosts; offer on monitor + PC terminals; one confirm; silent auto-measure (raw modem distances + anchors), fallback asks coords on the PC's own terminal; drift auto-fix or pause host. |
 | 2026-11-01 | coordinator | Requirement: basic + advanced hardware everywhere (keyboard-first UI, greyscale, no multishell) and full mesh relaying across wired/wireless/ender. Added to COMMS.md + cluster plan; sent to comms agent. |
+| 2026-11-01 | comms agent | CM-2..CM-5: simulator models modem range (basic 64 below Y 96, max(sender,receiver), ender always, wired per network, GPS same rule). Store-and-forward commands, `away`/ETA + overdue-only alerts, catch-up log, hop distances + relay rules (ender always, basic only closer, random delay + suppression), `relay` program, mesh over wired/wireless, keyboard navigation for basic computers. Storm test: 10 basic turtles, 2.13 transmissions per message (flooding: 11.6). Scenarios 41-46. Suite 47/47. |
+| 2026-11-01 | coordinator | Comms merged (5788e0c). Suite 47/47. Next: Cluster + GPS (CG-0..CG-4). |

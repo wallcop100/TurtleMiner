@@ -37,7 +37,7 @@ One command per computer. `setup.lua` downloads everything from the `claude/vigi
 wget run https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss/setup.lua server
 ```
 
-Use `server` on the main computer (monitor + update server, files in `/files/`), `monitor` for extra monitor computers, `pocket` on a pocket computer. Reboot each one afterwards. Then on each turtle at its home spot:
+Use `server` on the main computer (monitor + update server, files in `/files/`), `monitor` for extra monitor computers, `pocket` on a pocket computer, `relay` on a plain computer that only extends the network (see "Comms"). Reboot each one afterwards. Then on each turtle at its home spot:
 
 ```
 wget https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss/miner/install.lua install.lua
@@ -105,7 +105,7 @@ It detects that it is a pocket computer and shows the fleet the server sends eve
 
 ### Using the monitor
 
-Touch a turtle (or click it on the pocket screen) to see its details and commands:
+Touch a turtle (or click it on the pocket screen) to see its details and commands. On a basic computer (no mouse) use the arrow keys or Tab to move the `>` marker and Enter to press. Commands to a turtle that is out of range are shown as `queued` and are sent when it is next heard.
 
 | Button | Does |
 |--------|------|
@@ -118,6 +118,23 @@ Touch a turtle (or click it on the pocket screen) to see its details and command
 | RESET JOB | (asks first) Restart the grid at corridor 0 next time it is home |
 | RESET HOME | (asks first) "It is at its home now": use the current spot as home |
 | REBOOT | (asks first) Save and restart the turtle |
+
+## Comms: modems and range (all automatic)
+
+Nothing to configure: every turtle and computer works out what modem it has (none, basic, ender, wired), how far it is from the server (hops) and whether it is in contact, and keeps checking. Settings only override (`tminer.MODEM`, `tminer.RELAY`). Details in `docs/COMMS.md`.
+
+A basic (wireless) modem reaches 64 blocks at or below Y 96 (more higher up, 384 at build height). A message arrives when either end is in range of the other. An ender modem reaches the whole dimension: if either end has one, the message arrives.
+
+| Setup | What happens |
+|-------|--------------|
+| No modems | Turtles run blind; keyboard controls on the turtle; no monitor. |
+| Basic modems only | Contact near home. About 60 blocks down the shaft a turtle goes out of range: before leaving home it sends `away` with an ETA, the monitor shows `AWAY away, back by ~hh:mm` instead of an alarm, and alerts (`LATE!`) only when it is 50% + 2 min overdue or reports `NEEDS_HELP`/`ERROR`. Commands sent meanwhile are queued and delivered when it is heard again. Events it saw while out of contact (veins, problems) arrive in one catch-up log, merged into the event log at their real times. Turtles near each other relay for each other when that brings a message closer to the server. |
+| Basic + a relay computer | `setup relay` on a computer with a basic modem at the shaft bottom covers 64 blocks around it. |
+| One ender modem anywhere | On the server, a relay computer or one turtle: every turtle with any modem is in contact everywhere. |
+| Wired modems | Every computer running our software relays between all its modems, so wired-only computers (a server deep in a base) reach the turtles through any computer that also has a wireless modem, and separate wired networks joined by one wireless computer work as one network. |
+| 4 ender modems on the GPS hosts | GPS fixes at any depth. |
+
+A turtle counts as in contact when it heard a server or relay in the last 30 s. Out of contact it skips its status messages and buffers events (max 50, repeats coalesced); the newest status and the catch-up log go out as soon as contact returns. Everything (server, relay) also runs on basic computers: no colour, mouse, touch or multishell needed.
 
 ## Running without a monitor or modem
 
@@ -183,6 +200,8 @@ Settings live in the turtle's settings file under `tminer.<KEY>`. Change them wi
 | `HELP_RETRY` | 30 | no | Seconds between automatic retries while `NEEDS_HELP` ("stuck" retries wait 4x this) |
 | `AUTO_UPDATE` | true | yes | Check for updates at boot when at home |
 | `SURFACE_IF_LOST` | false | yes | Position lost after a crash: dig straight up to the surface and wait there (see "Blind turtles") |
+| `RELAY` | `auto` | no | Relay other turtles' messages: `auto` (ender modem: always; basic: when it moves a message closer), `on`, `off` |
+| `MODEM` | `auto` | no | Own modem kind, normally detected: `basic` or `ender` overrides (also read by `relay` and the monitor) |
 
 Grid settings (`BRANCH_LENGTH`, `BRANCH_SPACING`, `MAIN_LENGTH`) are frozen into the job when it starts; new values apply after `RESET_JOB`. `MAX_CORRIDORS`, `TARGET_Y` and `FOCUS` apply at once.
 

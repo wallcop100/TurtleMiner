@@ -42,6 +42,8 @@ Consequences:
    - Ender-modem nodes always relay (they are hubs by nature).
    - Basic-modem turtles relay using the distance-to-server rule from ARMY_PLAN §5 (only if it moves the message closer).
    - `relay` program for a plain computer: auto-detects its modems (ender, wireless, wired) and relays between all of them. Place one with an ender modem anywhere for full coverage, or one with a basic modem at the shaft bottom for 64 blocks around it.
+   - Mesh: every non-turtle node (server, relay, any computer running our software) relays between all its modems, so wired-only computers reach turtles through any wireless node and wired networks joined by a wireless hop act as one. Wired links count as one hop.
+   - Everything runs on basic computers too (no colour, mouse, touch or multishell needed; the monitor has keyboard navigation).
 6. **How a turtle knows it's in contact:** it heard any server/relay message within the last 30 s. Status sends while out of contact are skipped (no wasted work); the latest status goes out as soon as contact returns.
 
 ## What users get with each setup (all automatic)

@@ -1,4 +1,4 @@
--- Version: 1.3.0
+-- Version: 1.4.0
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
@@ -187,10 +187,80 @@ end
 
 local function save() return state.save(st) end
 
+-- Trips and ETA (docs/COMMS.md rule 3) ------------------------------------------
+-- Before leaving home the turtle sends `away` with an ETA so the monitor expects the silence
+-- of a basic-modem turtle at depth. The estimate uses the job size, its own measured trip times
+-- (running averages in st.stats: moveSec = seconds per fuel unit, tripSec = full trips) and fuel.
+
+local DEFAULT_MOVE_SEC = 1.5   -- s per move (dig + inspect + move) until a trip was measured
+local MIN_TRIP_SEC     = 60
+
+local function remainingMoves()
+    local g = type(st.job) == "table" and type(st.job.geom) == "table" and st.job.geom or {}
+    local bl = tonumber(g.bl) or cfg.BRANCH_LENGTH or 32
+    local sp = tonumber(g.sp) or cfg.BRANCH_SPACING or 3
+    local ml = tonumber(g.ml) or cfg.MAIN_LENGTH or 64
+    local nb = math.max(1, math.floor((ml - 1) / sp))
+    local perCorridor = (2 * bl + sp) + ml + 4 * bl * nb   -- spine, main, branches in and out
+    local j = type(st.job) == "table" and st.job or {}
+    local left = (cfg.MAX_CORRIDORS or 1) - (tonumber(j.corridor) or 0)
+    if left < 0 then left = 0 end
+    return math.max(0, left * perCorridor - (tonumber(j.branch) or 0) * 4 * bl)
+end
+
+local function estimateTripSec()
+    local s = st.stats
+    local rate = tonumber(s.moveSec) or DEFAULT_MOVE_SEC
+    local d = 0
+    local okD, pos = pcall(mine.jobStart, st.job)
+    if okD and type(pos) == "table" then d = nav.dist(st.home, pos) end
+    local est = (2 * d + remainingMoves()) * rate          -- the whole rest of the job
+    local f = turtle.getFuelLevel()
+    if type(f) == "number" then est = math.min(est, math.max(f, 2 * d) * rate) end   -- fuel runs out first
+    local hist = tonumber(s.tripSec)
+    if hist then est = math.min(est, math.max(hist, tonumber(s.lastTripSec) or hist)) end
+    return math.max(MIN_TRIP_SEC, math.floor(est))
+end
+
+local function markDeparture()
+    local s = st.stats
+    s.tripStart = os.epoch("utc")
+    local f = turtle.getFuelLevel()
+    s.tripFuel0 = type(f) == "number" and f or nil
+    s.tripNatural = nil
+end
+
+local function sendAway()
+    local est = estimateTripSec()
+    net.send("away", "server", {
+        label = os.getComputerLabel() or ("miner-" .. os.getComputerID()),
+        eta = os.epoch("utc") + est * 1000, est = est,
+    })
+end
+
+local function markArrival()
+    local s = st.stats
+    if not s.tripStart then return end
+    local dur = (os.epoch("utc") - s.tripStart) / 1000
+    local f = turtle.getFuelLevel()
+    if type(f) == "number" and type(s.tripFuel0) == "number" and s.tripFuel0 - f > 20 and dur > 0 then
+        local r = dur / (s.tripFuel0 - f)
+        s.moveSec = s.moveSec and (s.moveSec + r) / 2 or r
+    end
+    if s.tripNatural and dur > 0 then      -- only full trips (inventory full / fuel) predict the next
+        s.lastTripSec = math.floor(dur)
+        s.tripSec = s.tripSec and math.floor((s.tripSec + dur) / 2) or math.floor(dur)
+    end
+    s.tripStart, s.tripFuel0, s.tripNatural = nil, nil, nil
+end
+
 local function setPhase(p, reason)
+    local leaving = p == "TO_WORK" and atHome() and st.phase ~= "TO_WORK"
+    if leaving then markDeparture() end
     st.phase, st.reason = p, reason
     lastPhase = p
     save()
+    if leaving then sendAway() end
     net.statusNow()
     drawStatus()
     log(p .. (reason and (": " .. tostring(reason)) or ""))
@@ -546,6 +616,7 @@ H.RETURNING = function()
     if ok then
         bootFuel, homeOverhead = nil, 0   -- fuel burned getting here is not boot overhead
         st.stats.trips = st.stats.trips + 1
+        markArrival()
         return "UNLOADING"
     end
     helpRetry = function()
@@ -641,6 +712,7 @@ local function work()
         return "NEEDS_HELP", result == "full" and "inventory full at home" or "not enough fuel at home"
     end
     if result == "full" or result == "fuel" or result == "done" then st.flags.stuckRetries = nil end
+    if result == "full" or result == "fuel" then st.stats.tripNatural = true end
     if result == "full" then return "RETURNING", "inventory full" end
     if result == "fuel" then return "RETURNING", "low fuel" end
     if result == "done" then st.flags.afterHome = "DONE"; return "RETURNING", "job done" end

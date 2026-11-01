@@ -1,9 +1,10 @@
--- Version: 1.1.0
+-- Version: 1.2.0
 -- One-shot downloader. Usage (in CC, needs the HTTP API enabled):
 --   wget run <BASE>/setup.lua server    -- update server + monitor on one computer
 --   wget run <BASE>/setup.lua monitor   -- monitor only
 --   wget run <BASE>/setup.lua pocket    -- pocket computer
 --   wget run <BASE>/setup.lua turtle    -- turtle, without an update server
+--   wget run <BASE>/setup.lua relay     -- relay computer (any modems: ender, basic, wired)
 -- BASE = https://raw.githubusercontent.com/wallcop100/TurtleMiner/<branch>
 
 local BRANCH = "claude/vigilant-pasteur-g2krss"
@@ -57,11 +58,21 @@ elseif role == "pocket" then
     local s = fs.open("startup.lua", "w")
     s.write('shell.run("central_monitor")\n')
     s.close()
+elseif role == "relay" then
+    all({ { "servers/relay.lua", "relay.lua" } })
+    local s = fs.open("startup.lua", "w")
+    s.write('while true do\n'
+        .. '    local ok, err = pcall(shell.run, "relay")\n'
+        .. '    print("relay stopped: " .. tostring(err))\n'
+        .. '    sleep(5)\n'
+        .. 'end\n')
+    s.close()
+    print("ok  startup.lua (relay)")
 elseif role == "turtle" then
     for _, f in ipairs(MINER) do all({ { "miner/" .. f, f } }) end
     print("Now run: install")
 else
-    print("usage: setup server|monitor|pocket|turtle")
+    print("usage: setup server|monitor|pocket|turtle|relay")
     return
 end
 

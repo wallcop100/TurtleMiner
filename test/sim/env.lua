@@ -1,4 +1,4 @@
--- Version: 1.0.2
+-- Version: 1.1.0
 -- Builds the CC global environment for one boot of one sim computer:
 -- os, sleep, parallel, rednet, peripheral, gps, settings, textutils, term,
 -- window, paintutils, colors, keys, shell, require, fs, turtle, pocket, io,
@@ -599,9 +599,22 @@ function Env.build(sim, c)
             end
             if not hasModem then return nil end
             c.gpsLocates = (c.gpsLocates or 0) + 1
-            -- t.gpsMinY: GPS hosts out of modem range below this Y (64-block wireless range)
+            -- sim.gpsHosts = {{pos=, kind="basic"|"ender"}, ...}: a fix needs 3 hosts whose
+            -- reply reaches this computer under the modem range rule. Without it (legacy):
+            -- c.gps says GPS works; t.gpsMinY: hosts out of range below this Y.
             local t = c.turtle
-            if c.gps and t and not (t.gpsMinY and t.pos.y < t.gpsMinY) then
+            local mypos = t and t.pos or c.pos
+            if sim.gpsHosts then
+                local me = sim.endpoint(c, false)
+                local n = 0
+                for _, h in ipairs(sim.gpsHosts) do
+                    if sim.reach({ pos = h.pos, modems = { { kind = h.kind or "basic" } } }, me) then n = n + 1 end
+                end
+                if n >= 3 and mypos then
+                    sleep(0.1)
+                    return mypos.x, mypos.y, mypos.z
+                end
+            elseif c.gps and t and not (t.gpsMinY and t.pos.y < t.gpsMinY) then
                 sleep(0.1)
                 local p = c.turtle.pos
                 return p.x, p.y, p.z

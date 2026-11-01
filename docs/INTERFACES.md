@@ -32,7 +32,9 @@ st = {
   phase    = Phase, reason = string|nil,
   job      = Job,
   flags    = {resetJob=bool, update=bool},
-  stats    = {ores=0, blocks=0, trips=0, started=epoch},
+  stats    = {ores=0, blocks=0, trips=0, started=epoch,
+              moveSec, tripSec, lastTripSec,       -- measured: s per fuel unit, full-trip lengths (s)
+              tripStart, tripFuel0, tripNatural},  -- current trip (cleared on arrival home)
   lastError= string|nil,
 }
 ```
@@ -170,7 +172,15 @@ net.run(getStatus)                -- coroutine body, never returns:
 net.statusNow()                   -- ask run loop to send status at next tick (phase changes)
 net.poll() -> cmd|nil             -- pop next queued cmd {id, cmd, params}
 net.request(kind, body, replyKind, timeout) -> msg|nil   -- for home_get / update; safe to call from worker coroutine
+net.modemKind() -> "none"|"basic"|"ender"|"wired"   -- detected (equipped upgrade name / peripheral name
+                                  -- contains "advanced", or a basic sender heard > 400 blocks away); tminer.MODEM overrides
+net.hop() -> n|nil, via           -- distance to the server: 1 + min hop heard in the last 30 s
+net.inContact() -> bool           -- hop known (or first 30 s after boot, nothing heard yet)
+net.pendingEvents() -> n, dropped -- catch-up buffer size
+net.stats = {relayed, cancelled}
 ```
+- Out of contact: `status` sends skipped (sent when contact returns), `net.event` buffers (coalesced, max 50) and one `catchup` goes out on contact. Relays per PROTOCOL.md (`tminer.RELAY`).
+- miner: before leaving home (`TO_WORK` from home) sends `away` with the trip estimate; measures each trip into `st.stats`.
 
 ## miner.lua (WP-C)
 
@@ -212,5 +222,12 @@ sim.boot(t, {"miner"}, {maxTicks=N, crashAt=fn(event)->bool})  -- runs the progr
                                             -- given op or mid-file-write.
 sim.rollback(t, snapshot)                   -- world+turtle back to an earlier snapshot, fs untouched (server crash)
 sim.net                                     -- in-memory rednet shared by all sim computers
+sim.computer({pos=, modemKind="basic"|"ender"|"wired", wiredNet=, modems={{side,kind,net}}})
+                                            -- no pos = in range of everyone (legacy default: ender)
+turtle equip "computercraft:wireless_modem_normal" = basic, "..._advanced" = ender (default)
+sim.modemRange(y), sim.reach(a, b)          -- 64 below Y 96 .. 384 at 320; max(sender, receiver); ender always; wired per net
+sim.gpsHosts = {{pos=, kind=}}              -- optional: fixes need 3 hosts in reach (same rule)
+sim.net.modemEvents = true                  -- also queue modem_message with the distance
+sim.every(interval, fn)                     -- host-side ticker (fake servers' fleet heartbeat)
 ```
 Time is simulated (sleep advances a clock instantly). `os.epoch("utc")` follows the sim clock.

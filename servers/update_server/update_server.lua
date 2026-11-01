@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.2.0
 -- TurtleMiner update server. Serves the files in FILES_DIR to turtles over
 -- rednet protocol "TMINER" (update_check -> update_manifest, file_get -> file).
 -- Versions come from each file's first line: "-- Version: x.y.z".
@@ -89,6 +89,7 @@ local function envelope(kind, to, body)
     seq = seq + 1
     body.v, body.kind, body.from, body.to = 1, kind, ME, to
     body.boot, body.seq, body.ts, body.hops = BOOT, seq, os.epoch("utc"), 0
+    body.hop, body.ohop = 0, 0      -- a server: distance 0 (docs/COMMS.md)
     return body
 end
 

@@ -1,12 +1,21 @@
--- Version: 4.1.1
--- TurtleMiner central monitor. Speaks TMINER v1 only (docs/PROTOCOL.md).
+-- Version: 4.2.0
+-- TurtleMiner central monitor. Speaks TMINER v1 only (docs/PROTOCOL.md, docs/COMMS.md).
 --   Server mode (normal computer): relays TMINER traffic between all modems, tracks turtles,
 --     keeps home records, broadcasts `fleet`, sends commands to one turtle at a time.
+--     Commands to a turtle it hasn't heard lately are queued and delivered when it is next
+--     heard (store-and-forward). Turtles out of modem range announce `away` with an ETA; the
+--     monitor alerts only when they are overdue. Their `catchup` logs are merged by time.
 --   Pocket mode (`pocket` global present): read-only view built from `fleet` snapshots,
 --     commands go out as `cmd_relay` through the server.
 -- Usage: central_monitor [monitorSide|auto|none] [textScale]
 
 local M = {}
+
+-- Store-and-forward / expected absence (docs/COMMS.md rules 2 and 3)
+local QUEUE_EXPIRE_MS  = 24 * 3600 * 1000   -- queued commands are dropped after this
+local HEARD_MS         = 30000              -- heard within this: send commands at once
+local OVERDUE_FACTOR   = 1.5                -- alert when away longer than ETA * factor + grace
+local OVERDUE_GRACE_MS = 120000
 
 local PROTO            = "TMINER"
 local MAX_HOPS         = 4
@@ -59,7 +68,15 @@ local PHASE_SHORT = {
     BOOT = "BOOT", RECOVER = "RECOVR", TO_WORK = "TOWORK", MINING = "MINING", VEIN = "VEIN",
     RETURNING = "RETURN", UNLOADING = "UNLOAD", REFUELING = "REFUEL", IDLE = "IDLE",
     PAUSED = "PAUSED", NEEDS_HELP = "HELP!", ERROR = "ERROR", DONE = "DONE", SILENT = "SILENT",
+    AWAY = "AWAY", OVERDUE = "LATE!",
 }
+-- Kinds only turtles send: hearing one means the turtle is reachable right now.
+local TURTLE_KINDS = {
+    status = true, hello = true, event = true, ack = true, home_save = true, home_get = true,
+    home_clear = true, away = true, catchup = true, update_check = true, file_get = true,
+}
+-- Phases at home: an `away` announcement is over.
+local HOME_PHASES = { UNLOADING = true, REFUELING = true, IDLE = true, DONE = true }
 local ENVELOPE = { v = true, kind = true, to = true, boot = true, seq = true, hops = true, ts = true, from = true }
 
 -- ---------------------------------------------------------------------------
@@ -72,6 +89,8 @@ local S = {
     log = {}, cmdCounter = 0, lastFleet = 0, lastDirtyTick = 0,
     fleetFrom = nil, fleetLabel = nil, fleetAt = 0,
     uis = {}, dirtyQueued = false,
+    modemKind = "none", hasWired = false, inferredEnder = false,
+    evSeen = {}, evSeenQ = {}, evSeenPos = 0,
 }
 M.S = S
 
@@ -169,6 +188,36 @@ local function logLine(text)
 end
 M.logLine = logLine
 
+-- Merge lines with their original times (catch-up logs): sorted insert, then one file rewrite.
+local function logMerge(entries)
+    if #entries == 0 then return end
+    table.sort(entries, function(a, b) return a.ms < b.ms end)
+    for _, e in ipairs(entries) do
+        local line = stamp(e.ms) .. " " .. e.text
+        local key = line:sub(1, 14)
+        local i = #S.log
+        while i >= 1 and S.log[i]:sub(1, 14) > key do i = i - 1 end
+        table.insert(S.log, i + 1, line)
+    end
+    while #S.log > LOG_MAX do table.remove(S.log, 1) end
+    if S.mode == "server" then pcall(writeAtomic, LOG_FILE, table.concat(S.log, "\n") .. "\n") end
+    markDirty()
+end
+M.logMerge = logMerge
+
+-- Clock text for an epoch-ms time, in the server's local time when os.epoch("local") exists.
+local function clockText(ms)
+    local off = 0
+    local okL, l = pcall(os.epoch, "local")
+    local okU, u = pcall(os.epoch, "utc")
+    if okL and okU and type(l) == "number" and type(u) == "number" then
+        off = math.floor((l - u) / 60000 + 0.5) * 60000
+    end
+    local ok, s = pcall(os.date, "!%H:%M", math.floor((ms + off) / 1000))
+    return ok and s or "?"
+end
+M.clockText = clockText
+
 -- ---------------------------------------------------------------------------
 -- Network
 -- ---------------------------------------------------------------------------
@@ -187,18 +236,36 @@ local function send(kind, to, body)
     S.seq = S.seq + 1
     msg.v, msg.kind, msg.from, msg.to = 1, kind, S.myId, to
     msg.boot, msg.seq, msg.ts, msg.hops = S.boot, S.seq, now(), 0
+    -- Distance to the server (docs/COMMS.md): a server is 0; a pocket doesn't relay (no `hop`).
+    if S.mode == "server" then msg.hop, msg.ohop = 0, 0 end
+    msg.mk = S.modemKind
     markSeen(msg.from .. ":" .. msg.boot .. ":" .. msg.seq)
     if S.netOk then pcall(rednet.broadcast, msg, PROTO) end
     return msg
 end
 
+-- Own modem kind: wired / basic / ender. A computer can't tell an ender modem from a basic
+-- one, so wireless counts as basic unless setting tminer.MODEM says otherwise or we hear a
+-- basic-modem sender from beyond any basic range (only an ender receiver can).
+local function updateKind(wireless, wired)
+    local o = settings and settings.get and settings.get("tminer.MODEM")
+    if o == "ender" or o == "basic" or o == "wired" then S.modemKind = o
+    elseif wireless then S.modemKind = S.inferredEnder and "ender" or "basic"
+    elseif wired then S.modemKind = "wired"
+    else S.modemKind = "none" end
+end
+
 local function openModems()
-    local any = false
+    local any, wireless, wired = false, false, false
     for _, name in ipairs(peripheral.getNames()) do
         if peripheral.getType(name) == "modem" then
+            local okW, w = pcall(peripheral.call, name, "isWireless")
+            if okW and w then wireless = true else wired = true end
             if pcall(rednet.open, name) then any = true end
         end
     end
+    S.hasWired = wired
+    updateKind(wireless, wired)
     S.netOk = any or (rednet.isOpen and rednet.isOpen()) or false
     return S.netOk
 end
@@ -221,8 +288,25 @@ end
 
 local function nameOf(r) return labelOf(r) .. " #" .. r.id end
 
+local function overdueAt(a)
+    return a.since + math.floor((a.eta - a.since) * OVERDUE_FACTOR) + OVERDUE_GRACE_MS
+end
+
+-- Silent but announced `away` and not overdue: no alert (the card says "away, back by").
+local function isAway(r, t)
+    return r.away ~= nil and t - (r.lastSeen or 0) > SILENT_MS and t <= overdueAt(r.away)
+end
+
+local function awayText(r)
+    if not r.away then return nil end
+    return "away, back by ~" .. clockText(r.away.eta)
+end
+
 local function alertOf(r, t)
-    if t - (r.lastSeen or 0) > SILENT_MS then return "SILENT" end
+    if t - (r.lastSeen or 0) > SILENT_MS then
+        if not r.away then return "SILENT" end
+        if t > overdueAt(r.away) then return "OVERDUE" end
+    end
     local ph = r.st.phase
     if ph == "NEEDS_HELP" or ph == "ERROR" then return ph end
     return nil
@@ -259,6 +343,12 @@ local function onStatus(msg)
     local r = getRec(msg.from, true)
     local old = r.st.phase
     r.st = stripEnvelope(msg)
+    r.st.hop, r.st.ohop, r.st.via, r.st.mk = nil, nil, nil, nil
+    r.mk = msg.mk
+    if HOME_PHASES[r.st.phase] and r.away then
+        r.away = nil
+        logLine(nameOf(r) .. ": back home")
+    end
     r.lastSeen = now()
     if old ~= r.st.phase then
         logLine(nameOf(r) .. ": " .. tostring(old or "?") .. " -> " .. tostring(r.st.phase)
@@ -276,13 +366,69 @@ local function onHello(msg)
     logLine(nameOf(r) .. ": online v" .. tostring(msg.version) .. (msg.gps and " gps" or " no-gps"))
 end
 
+-- Event ids (`eid`) seen: an event re-sent in a catch-up log is logged once.
+local function eventNew(eid)
+    if type(eid) ~= "string" then return true end
+    if S.evSeen[eid] then return false end
+    S.evSeenPos = S.evSeenPos % DEDUPE_MAX + 1
+    local old = S.evSeenQ[S.evSeenPos]
+    if old then S.evSeen[old] = nil end
+    S.evSeenQ[S.evSeenPos] = eid
+    S.evSeen[eid] = true
+    return true
+end
+
+local function addEvent(r, level, text, at)
+    local i = 1
+    while r.events[i] and (r.events[i].at or 0) > at do i = i + 1 end
+    table.insert(r.events, i, { level = level, text = text, at = at })
+    while #r.events > EVENTS_KEEP do table.remove(r.events) end
+end
+
 local function onEvent(msg)
     local r = getRec(msg.from, true)
     r.lastSeen = now()
+    if not eventNew(msg.eid) then return end
     local text = trunc(msg.text, 200)
     table.insert(r.events, 1, { level = msg.level, text = text, at = r.lastSeen })
     while #r.events > EVENTS_KEEP do table.remove(r.events) end
     logLine(nameOf(r) .. " [" .. tostring(msg.level or "info") .. "] " .. text)
+end
+
+-- Expected absence: ETA from the turtle's own estimate, measured on the server clock.
+local function onAway(msg)
+    local r = getRec(msg.from, true)
+    local t = now()
+    r.lastSeen = t
+    if msg.label then r.st.label = msg.label end
+    local est = tonumber(msg.est)
+    local eta = est and (t + est * 1000) or tonumber(msg.eta)
+    if not eta then return end
+    r.away = { since = t, eta = eta }
+    logLine(nameOf(r) .. ": " .. awayText(r))
+    markDirty()
+end
+
+-- Catch-up log: events buffered while out of contact, merged with their original times.
+local function onCatchup(msg)
+    local r = getRec(msg.from, true)
+    r.lastSeen = now()
+    if type(msg.events) ~= "table" then return end
+    local lines = {}
+    for _, e in ipairs(msg.events) do
+        if type(e) == "table" and type(e.text) == "string" and eventNew(e.eid) then
+            local ms = tonumber(e.ts) or now()
+            local n = tonumber(e.n) or 1
+            local text = trunc(e.text, 200) .. (n > 1 and (" (x" .. n .. ")") or "")
+            lines[#lines + 1] = { ms = ms, text = nameOf(r) .. " [" .. tostring(e.level or "info") .. "] " .. text .. " (catch-up)" }
+            addEvent(r, e.level, text, tonumber(e.last) or ms)
+        end
+    end
+    local dropped = tonumber(msg.dropped) or 0
+    if dropped > 0 then
+        lines[#lines + 1] = { ms = now(), text = nameOf(r) .. " [warn] " .. dropped .. " older events dropped while out of contact" }
+    end
+    logMerge(lines)
 end
 
 -- Pocket: merge a fleet snapshot (newest lastSeen wins per turtle).
@@ -298,9 +444,12 @@ local function onFleet(msg)
             local ls = tonumber(t.lastSeen) or 0
             if ls >= r.lastSeen then
                 local st = copy(t)
-                st.id, st.lastSeen, st.alert = nil, nil, nil
+                st.id, st.lastSeen, st.alert, st.away, st.queued = nil, nil, nil, nil, nil
                 r.st = st
                 r.lastSeen = ls
+                r.away = type(t.away) == "table" and tonumber(t.away.since) and tonumber(t.away.eta)
+                    and { since = t.away.since, eta = t.away.eta } or nil
+                r.queued = tonumber(t.queued)
             end
         end
     end
@@ -345,17 +494,63 @@ local function transmitCmd(p)
     end
 end
 
+-- Store-and-forward: hold the command until the turtle is heard again (server), or until the
+-- server reports it delivered (pocket).
+local function queueCmd(p)
+    p.queued = true
+    p.deadline = math.huge
+    local r = getRec(p.target, true)
+    r.cmd = { name = cmdText(p.cmd, p.params), state = "queued", at = p.queuedAt or now() }
+    local first = p.queuedAt == nil
+    p.queuedAt = p.queuedAt or now()
+    if S.mode == "server" and first then
+        logLine("CMD " .. r.cmd.name .. " -> " .. nameOf(r) .. ": queued until it is heard")
+        if p.origin then send("ack", p.origin, { id = p.id, queued = true, target = p.target }) end
+    end
+    markDirty()
+end
+M.queueCmd = queueCmd
+
+-- The turtle was just heard: send what is queued for it (retried until acked).
+local function deliverQueued(r)
+    for _, p in pairs(S.pending) do
+        if p.target == r.id and p.queued then
+            p.queued = false
+            p.tries = 1
+            transmitCmd(p)
+            r.cmd = { name = cmdText(p.cmd, p.params), state = "pending", tries = 1, at = now() }
+            markDirty()
+        end
+    end
+end
+
+-- Same kind = same target and command (SET: same key). A newer one replaces the older.
+local function sameKind(a, target, cmd, params)
+    return a.target == target and a.cmd == cmd
+        and (cmd ~= "SET" or (type(a.params) == "table" and type(params) == "table" and a.params.key == params.key))
+end
+
 -- Send one command to ONE turtle. Returns the command id.
 function M.issueCmd(target, cmd, params, origin, id)
     id = id or newCmdId()
-    local p = { id = id, target = target, cmd = cmd, params = params or {}, tries = 1, origin = origin }
+    params = params or {}
+    local p = { id = id, target = target, cmd = cmd, params = params, tries = 1, origin = origin, created = now() }
     local r = getRec(target, true)
     if S.mode == "pocket" and not S.fleetFrom then
         r.cmd = { name = cmdText(cmd, p.params), state = "failed", err = "no server heard", at = now() }
         markDirty()
         return id
     end
+    local old = {}
+    for _, q in pairs(S.pending) do
+        if q.id ~= id and sameKind(q, target, cmd, params) then old[#old + 1] = q end
+    end
+    for _, q in ipairs(old) do finishCmd(q, false, "replaced") end
     S.pending[id] = p
+    if S.mode == "server" and now() - (r.lastSeen or 0) > HEARD_MS then
+        queueCmd(p)
+        return id
+    end
     transmitCmd(p)
     r.cmd = { name = cmdText(cmd, p.params), state = "pending", tries = 1, at = now() }
     markDirty()
@@ -370,6 +565,10 @@ local function onAck(msg)
     elseif msg.from ~= p.target and msg.from ~= p.server then
         return
     end
+    if msg.queued then
+        if S.mode == "pocket" then queueCmd(p) end
+        return
+    end
     finishCmd(p, msg.ok == true, msg.err)
 end
 
@@ -381,7 +580,12 @@ local function onCmdRelay(msg)
         send("ack", msg.from, { id = id, ok = false, err = "unknown cmd", target = target })
         return
     end
-    if S.pending[id] then S.pending[id].origin = msg.from; return end
+    local p = S.pending[id]
+    if p then
+        p.origin = msg.from
+        if p.queued then send("ack", msg.from, { id = id, queued = true, target = p.target }) end
+        return
+    end
     local d = S.done[id]
     if d then
         send("ack", msg.from, { id = id, ok = d.ok, err = d.err, target = d.target })
@@ -430,14 +634,27 @@ function M.handleMessage(sender, msg, protocol)
     if hops > MAX_HOPS or msg.from == S.myId then return end
     if not markSeen(msg.from .. ":" .. msg.boot .. ":" .. msg.seq) then return end
 
-    if S.mode == "server" and msg.kind ~= "fleet" and hops < MAX_HOPS and S.netOk then
+    -- Relay (hub). A copy from an ender modem was heard by every wireless modem already.
+    if S.mode == "server" and msg.kind ~= "fleet" and hops < MAX_HOPS and S.netOk
+        and not (msg.mk == "ender" and not S.hasWired) then
         local c = copy(msg)
         c.hops = hops + 1
+        c.hop, c.via, c.mk = 0, nil, S.modemKind
         pcall(rednet.broadcast, c, PROTO)
     end
 
     local k = msg.kind
+    -- Any message from a turtle: it is reachable now, deliver its queued commands.
+    if S.mode == "server" and TURTLE_KINDS[k] then
+        local r = getRec(msg.from, false)
+        if r then
+            r.lastSeen = now()
+            deliverQueued(r)
+        end
+    end
     if k == "status" then onStatus(msg)
+    elseif k == "away" then onAway(msg)
+    elseif k == "catchup" then onCatchup(msg)
     elseif k == "hello" then onHello(msg)
     elseif k == "event" then onEvent(msg)
     elseif k == "ack" then
@@ -461,6 +678,10 @@ local function sendFleet(t)
     for id, r in pairs(S.turtles) do
         local e = copy(r.st)
         e.id, e.lastSeen, e.alert = id, r.lastSeen, r.alert
+        e.away = r.away
+        local q = 0
+        for _, p in pairs(S.pending) do if p.target == id and p.queued then q = q + 1 end end
+        e.queued = q > 0 and q or nil
         arr[#arr + 1] = e
     end
     table.sort(arr, function(a, b) return a.id < b.id end)
@@ -471,8 +692,12 @@ end
 
 function M.tick()
     local t = now()
-    for _, p in pairs(S.pending) do
-        if t >= p.deadline then
+    local list = {}
+    for _, p in pairs(S.pending) do list[#list + 1] = p end
+    for _, p in ipairs(list) do
+        if t - (p.created or t) > QUEUE_EXPIRE_MS then
+            finishCmd(p, false, "expired")
+        elseif not p.queued and t >= p.deadline then
             local maxTries = (S.mode == "server") and (1 + ACK_RETRIES) or (1 + RELAY_RETRIES)
             if p.tries < maxTries then
                 p.tries = p.tries + 1
@@ -480,8 +705,10 @@ function M.tick()
                 local r = getRec(p.target, true)
                 if r.cmd then r.cmd.tries = p.tries end
                 markDirty()
+            elseif S.mode == "server" then
+                queueCmd(p)          -- no ack: keep it until the turtle is heard again
             else
-                finishCmd(p, false, S.mode == "server" and "no ack" or "no reply from server")
+                finishCmd(p, false, "no reply from server")
             end
         end
     end
@@ -542,20 +769,33 @@ local function phaseColor(ph)
     if ph == "PAUSED" or ph == "BOOT" or ph == "RECOVER" then return colors.yellow end
     if ph == "NEEDS_HELP" then return colors.orange end
     if ph == "ERROR" then return colors.red end
-    if ph == "SILENT" then return colors.gray end
+    if ph == "SILENT" or ph == "AWAY" then return colors.gray end
+    if ph == "OVERDUE" then return colors.red end
     return colors.white
 end
 
 local function shownPhase(r)
-    if r.alert == "SILENT" then return "SILENT" end
+    if r.alert == "SILENT" or r.alert == "OVERDUE" then return r.alert end
+    if isAway(r, now()) then return "AWAY" end
     return r.st.phase or "?"
 end
+
+-- Reason line: while away and silent, when it is expected back.
+local function reasonOf(r)
+    if r.away and (isAway(r, now()) or r.alert == "OVERDUE") then
+        return awayText(r) .. (r.alert == "OVERDUE" and " - OVERDUE" or "")
+    end
+    return r.st.reason
+end
+M.shownPhase, M.reasonOf = shownPhase, reasonOf
 
 local function cmdLine(r)
     local c = r.cmd
     if not c then return nil end
     if c.state == "pending" then
         return c.name .. ": waiting (" .. tostring(c.tries or 1) .. ")", colors.yellow
+    elseif c.state == "queued" then
+        return c.name .. ": queued " .. ago(c.at), colors.yellow
     elseif c.state == "ok" then
         return c.name .. ": ok " .. ago(c.at), colors.lime
     end
@@ -688,7 +928,7 @@ local function drawRow(ui, r, y, rowsPer)
         put(ui, x, y, pad(d and ("h" .. d) or "h-", 6), colors.white, bg); x = x + 7
         put(ui, x, y, pad(ago(r.lastSeen), 5), colors.lightGray, bg); x = x + 6
         if rowsPer == 1 and x <= w then
-            put(ui, x, y, trunc(st.reason or "", w - x + 1), colors.lightGray, bg)
+            put(ui, x, y, trunc(reasonOf(r) or "", w - x + 1), colors.lightGray, bg)
         end
     else
         local fuel, low = fuelStr(st, false)
@@ -700,7 +940,7 @@ local function drawRow(ui, r, y, rowsPer)
         if fw > 0 then put(ui, w - fw + 1, y, lpad(fuel, fw), lowFg(low), bg) end
     end
     if rowsPer == 2 then
-        local t, fg = st.reason or st.lastError, colors.lightGray
+        local t, fg = reasonOf(r) or st.lastError, colors.lightGray
         if not t then t, fg = cmdLine(r) end
         if not t then t = "#" .. r.id .. " " .. posStr(st.pos) end
         put(ui, 3, y + 1, trunc(t, w - 2), r.alert and colors.white or (fg or colors.lightGray), bg)
@@ -747,7 +987,7 @@ local function renderList(ui)
             info = "no server"
         end
     else
-        info = S.netOk and "relay on" or "NO MODEM"
+        info = S.netOk and ("relay on " .. S.modemKind) or "NO MODEM"
     end
     if pages > 1 then info = ui.page .. "/" .. pages .. " " .. info end
     local logW = (w - x + 1 >= 10) and 5 or 0
@@ -761,7 +1001,8 @@ local function detailLines(r, wide)
     local function add(k, v, fg) L[#L + 1] = { k, tostring(v), fg } end
     local ph = shownPhase(r)
     add("Phase", ph .. (r.alert and r.alert ~= ph and (" " .. r.alert) or ""), phaseColor(ph))
-    add("Why", st.reason or "-", st.reason and colors.orange or nil)
+    local why = reasonOf(r)
+    add("Why", why or "-", why and colors.orange or nil)
     local need = tonumber(st.fuelNeeded)
     local fuelTxt, low = fuelStr(st, false)
     add("Fuel", fuelTxt .. (need and (" need " .. compact(need)) or ""), low and colors.red or nil)
@@ -1070,7 +1311,35 @@ function M.render(ui)
         ui.view = "list"
         renderList(ui)
     end
+    -- Keyboard focus marker (after the first arrow/tab key; basic computers have no mouse).
+    if ui.focus then
+        if ui.focus > #ui.buttons then ui.focus = #ui.buttons end
+        local b = ui.buttons[ui.focus]
+        if b then put(ui, b.x1, b.y1, ">", colors.yellow, colors.black) end
+    end
     if ui.win then ui.win.setVisible(true) end
+end
+
+-- Arrow keys / Tab move a focus over the clickable things, Enter activates it. Works on any
+-- computer (no colour, mouse or touch needed). Returns true when the key was used.
+function M.navKey(ui, key)
+    if not keys then return false end
+    local n = #ui.buttons
+    if key == keys.down or key == keys.right or key == keys.tab then
+        if n == 0 then return true end
+        ui.focus = ((ui.focus or 0) % n) + 1
+    elseif key == keys.up or key == keys.left then
+        if n == 0 then return true end
+        ui.focus = (((ui.focus or 1) - 2) % n) + 1
+    elseif (key == keys.enter or key == keys.numPadEnter) and ui.focus and ui.buttons[ui.focus] then
+        local b = ui.buttons[ui.focus]
+        ui.focus = 1
+        b.fn()
+    else
+        return false
+    end
+    M.render(ui)
+    return true
 end
 
 function M.click(ui, x, y)
@@ -1134,8 +1403,19 @@ end
 
 local function netLoop()
     while true do
-        local _, sender, msg, protocol = os.pullEvent("rednet_message")
-        M.handleMessage(sender, msg, protocol)
+        local ev = { os.pullEvent() }
+        if ev[1] == "rednet_message" then
+            M.handleMessage(ev[2], ev[3], ev[4])
+        elseif ev[1] == "modem_message" and not S.inferredEnder then
+            -- A basic-modem sender heard from beyond any basic range: ours is an ender modem.
+            local p, d = ev[5], ev[6]
+            if type(p) == "table" and p.sProtocol == PROTO and type(p.message) == "table"
+                and p.message.mk == "basic" and type(d) == "number" and d > 400 then
+                S.inferredEnder = true
+                openModems()
+                markDirty()
+            end
+        end
     end
 end
 
@@ -1165,7 +1445,9 @@ local function uiLoop()
             end
         elseif e == "char" or e == "key" then
             for _, ui in ipairs(S.uis) do
-                if ui.side == nil and ui.view == "num" then
+                if ui.side == nil and e == "key" and M.navKey(ui, ev[2]) then
+                    -- handled: keyboard navigation (basic computers have no mouse)
+                elseif ui.side == nil and ui.view == "num" then
                     if e == "char" and ev[2]:match("^[0-9%-]$") then numKey(ui, ev[2])
                     elseif e == "key" and ev[2] == keys.backspace then numKey(ui, "DEL")
                     elseif e == "key" and (ev[2] == keys.enter or ev[2] == keys.numPadEnter) then numOk(ui) end

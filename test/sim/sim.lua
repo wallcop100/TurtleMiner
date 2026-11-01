@@ -1,4 +1,4 @@
--- Version: 1.0.1
+-- Version: 1.1.0
 -- Headless CC:Tweaked simulator: computers, turtles, a voxel world, an
 -- in-memory rednet, and a single event scheduler on a simulated clock.
 --
@@ -47,6 +47,7 @@ function sim.reset()
     sim.observers = {}
     sim.net = sim.newNet()
     sim.verbose = os.getenv("SIM_VERBOSE") ~= nil
+    math.randomseed(4242)  -- reproducible relay delays / ids
     local seed = 12345
     items.rng = function(a, b)
         seed = (seed * 1103515245 + 12345) % 2147483648
@@ -162,8 +163,16 @@ local function newComputer(opts)
     if c.pocket then tw, th = 26, 20 end
     if opts.termSize then tw, th = opts.termSize[1], opts.termSize[2] end
     c.term = Term.new(tw, th, { strict = opts.strictTerm, color = true })
-    if opts.modem ~= false and c.kind ~= "turtle" then
-        c.peripherals[opts.modem or "back"] = sim.modemPeripheral(c, opts.modem or "back", true)
+    -- Position (for modem range) and modems. A computer without `pos` is in range of every
+    -- wireless modem (legacy scenarios). Default modem: ender ("advanced") on the back.
+    c.pos = opts.pos and sim.copyPos(opts.pos) or nil
+    if opts.modems then
+        for _, m in ipairs(opts.modems) do
+            c.peripherals[m.side] = sim.modemPeripheral(c, m.side, m.kind ~= "wired", m.kind or "ender", m.net)
+        end
+    elseif opts.modem ~= false and c.kind ~= "turtle" then
+        local kind = opts.modemKind or "ender"
+        c.peripherals[opts.modem or "back"] = sim.modemPeripheral(c, opts.modem or "back", kind ~= "wired", kind, opts.wiredNet)
     end
     sim.computers[#sim.computers + 1] = c
     sim.byId[c.id] = c
@@ -241,8 +250,9 @@ function sim.addHook(t, fn) t.hooks[#t.hooks + 1] = fn end
 ---------------------------------------------------------------------------
 -- peripherals
 ---------------------------------------------------------------------------
-function sim.modemPeripheral(c, side, wireless)
-    local p = { types = { "modem" } }
+-- kind: "basic" | "ender" | "wired" (the sim's truth; CC exposes only isWireless)
+function sim.modemPeripheral(c, side, wireless, kind, wiredNet)
+    local p = { types = { "modem" }, kind = kind or (wireless and "ender" or "wired"), wiredNet = wiredNet or "wired" }
     local m = {}
     local function chans()
         c.channels[side] = c.channels[side] or {}
@@ -299,7 +309,9 @@ function sim.peripheralAt(c, side)
                 c._equipModems = c._equipModems or {}
                 local cached = c._equipModems[side]
                 if not cached then
-                    cached = sim.modemPeripheral(c, side, not t.equip[side]:find("wired"))
+                    local nm = t.equip[side]
+                    local kind = nm:find("wired") and "wired" or (nm:find("advanced") and "ender" or "basic")
+                    cached = sim.modemPeripheral(c, side, kind ~= "wired", kind)
                     c._equipModems[side] = cached
                 end
                 return cached
@@ -320,28 +332,106 @@ end
 ---------------------------------------------------------------------------
 -- network (in-memory rednet shared by all sim computers)
 ---------------------------------------------------------------------------
+-- Modem range (CC:Tweaked defaults): 64 blocks at or below Y 96, rising linearly to 384 at
+-- build height (320). Straight-line 3D distance. A message is delivered when
+-- distance <= max(sender range, receiver range); if either end is an ender modem it is
+-- always delivered; wired modems reach only modems on the same wired network.
+sim.MODEM_MIN, sim.MODEM_MAX, sim.MODEM_HIGH, sim.BUILD_HEIGHT = 64, 384, 96, 320
+
+function sim.modemRange(y)
+    if y <= sim.MODEM_HIGH then return sim.MODEM_MIN end
+    local r = sim.MODEM_MIN + (y - sim.MODEM_HIGH) / (sim.BUILD_HEIGHT - sim.MODEM_HIGH) * (sim.MODEM_MAX - sim.MODEM_MIN)
+    if r > sim.MODEM_MAX then r = sim.MODEM_MAX end
+    return r
+end
+
+local ALL_SIDES = { "top", "bottom", "left", "right", "front", "back" }
+
+-- Where a computer is and which modems it can use. openOnly: only rednet-opened sides.
+function sim.endpoint(c, openOnly)
+    local ep = { pos = c.turtle and c.turtle.pos or c.pos, modems = {} }
+    local sides = {}
+    for _, s in ipairs(ALL_SIDES) do sides[#sides + 1] = s end
+    for s in pairs(c.peripherals) do
+        local dup = false
+        for _, x in ipairs(ALL_SIDES) do if x == s then dup = true end end
+        if not dup then sides[#sides + 1] = s end
+    end
+    for _, s in ipairs(sides) do
+        if not openOnly or c.rednetOpen[s] then
+            local p = sim.peripheralAt(c, s)
+            if p and p.types[1] == "modem" and p.kind then
+                ep.modems[#ep.modems + 1] = { kind = p.kind, net = p.wiredNet, side = s }
+            end
+        end
+    end
+    return ep
+end
+
+-- Can a message from endpoint a reach endpoint b? Returns ok, distance (nil if unknown), side at b.
+function sim.reach(a, b)
+    local d
+    if a.pos and b.pos then
+        local dx, dy, dz = a.pos.x - b.pos.x, a.pos.y - b.pos.y, a.pos.z - b.pos.z
+        d = math.sqrt(dx * dx + dy * dy + dz * dz)
+    end
+    for _, ma in ipairs(a.modems) do
+        for _, mb in ipairs(b.modems) do
+            if ma.kind == "wired" or mb.kind == "wired" then
+                if ma.kind == "wired" and mb.kind == "wired" and ma.net == mb.net then return true, nil, mb.side end
+            elseif ma.kind == "ender" or mb.kind == "ender" or d == nil then
+                return true, d, mb.side
+            else
+                local r = math.max(sim.modemRange(a.pos.y), sim.modemRange(b.pos.y))
+                if d <= r then return true, d, mb.side end
+            end
+        end
+    end
+    return false
+end
+
 function sim.newNet()
-    local net = { taps = {}, nodes = {}, log = {}, latency = 0.05 }
+    local net = { taps = {}, nodes = {}, nodeInfo = {}, log = {}, latency = 0.05, modemEvents = false }
     -- tap(fromId, toId|nil, msg, protocol) is called for every message sent
     function net.tap(fn) net.taps[#net.taps + 1] = fn end
     -- virtual node: receives like a computer, onMessage(fromId, msg, protocol, toId)
-    function net.addNode(id, onMessage)
+    -- info (optional): {pos=, kind="basic"|"ender"|"wired", net=}; no pos = reaches everyone
+    function net.addNode(id, onMessage, info)
         net.nodes[id] = onMessage
+        info = info or {}
+        net.nodeInfo[id] = { pos = info.pos, modems = { { kind = info.kind or "ender", net = info.net or "wired", side = "back" } } }
     end
     local function isOpen(c)
         for _, v in pairs(c.rednetOpen) do if v then return true end end
         return false
     end
+    local function senderEndpoint(fromId)
+        local c = sim.byId[fromId]
+        if c then return sim.endpoint(c, true) end
+        return net.nodeInfo[fromId] or { modems = { { kind = "ender", side = "back" } } }
+    end
     function net.deliver(fromId, toId, msg, protocol)
         net.log[#net.log + 1] = { time = sim.now, from = fromId, to = toId, msg = msg, protocol = protocol }
         for _, tap in ipairs(net.taps) do tap(fromId, toId, msg, protocol) end
+        local src = senderEndpoint(fromId)
         for _, c in ipairs(sim.computers) do
             if c.alive and not c.halted and isOpen(c) and (toId == nil and c.id ~= fromId or toId == c.id) then
-                sim.queue(c, sim.now + net.latency, { "rednet_message", fromId, World.deepcopy(msg), protocol, n = 4 })
+                local ok, dist, side = sim.reach(src, sim.endpoint(c, true))
+                if ok then
+                    if net.modemEvents then
+                        local ch = toId or 65535
+                        sim.queue(c, sim.now + net.latency, { "modem_message", side, ch, fromId,
+                            { nMessageID = math.random(1, 2147483647), nRecipient = ch, message = World.deepcopy(msg), sProtocol = protocol },
+                            dist, n = 6 })
+                    end
+                    sim.queue(c, sim.now + net.latency, { "rednet_message", fromId, World.deepcopy(msg), protocol, n = 4 })
+                end
             end
         end
         for id, fn in pairs(net.nodes) do
-            if (toId == nil and id ~= fromId) or toId == id then fn(fromId, World.deepcopy(msg), protocol, toId) end
+            if ((toId == nil and id ~= fromId) or toId == id) and sim.reach(src, net.nodeInfo[id]) then
+                fn(fromId, World.deepcopy(msg), protocol, toId)
+            end
         end
     end
     -- inject a message as if sent by fromId (virtual servers use this)
@@ -349,17 +439,28 @@ function sim.newNet()
         net.deliver(fromId, toId, msg, protocol)
     end
     function net.transmit(c, ch, reply, msg)
+        local src = sim.endpoint(c, false)
         for _, o in ipairs(sim.computers) do
             if o ~= c and o.alive and not o.halted then
                 for side, chs in pairs(o.channels) do
                     if chs[ch] then
-                        sim.queue(o, sim.now + net.latency, { "modem_message", side, ch, reply, World.deepcopy(msg), 10, n = 6 })
+                        local ok, dist = sim.reach(src, sim.endpoint(o, false))
+                        if ok then
+                            sim.queue(o, sim.now + net.latency, { "modem_message", side, ch, reply, World.deepcopy(msg), dist or 10, n = 6 })
+                        end
                     end
                 end
             end
         end
     end
     return net
+end
+
+-- Host-side periodic callback on the sim clock (fake servers' heartbeats). fn() returning
+-- false stops it.
+local ticker = { alive = true, bootN = 0, id = -1 }
+function sim.every(interval, fn, first)
+    sim.queue(ticker, sim.now + (first or 0), { "sim_every", fn = fn, interval = interval, n = 1 })
 end
 
 ---------------------------------------------------------------------------
@@ -521,7 +622,11 @@ function sim.run(opts)
         end
         if e.time > sim.now then sim.now = e.time end
         sim.ticks = sim.ticks + 1
-        deliver(e.c, e.args)
+        if e.args.fn then
+            if e.args.fn() ~= false then sim.every(e.args.interval, e.args.fn, e.args.interval) end
+        else
+            deliver(e.c, e.args)
+        end
     end
 end
 

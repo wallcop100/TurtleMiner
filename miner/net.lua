@@ -1,16 +1,29 @@
--- Version: 1.0.3
--- TurtleMiner network layer (TMINER protocol v1, see docs/PROTOCOL.md).
--- One rednet wrapper for the whole turtle. Never moves the turtle, never relays.
+-- Version: 1.1.0
+-- TurtleMiner network layer (TMINER protocol v1, see docs/PROTOCOL.md and docs/COMMS.md).
+-- One rednet wrapper for the whole turtle. Never moves the turtle.
 -- Works offline: with no modem every send is a silent no-op.
+-- Everything about the network is detected at runtime, nothing is configured:
+--   own modem kind (none/basic/ender/wired), distance to the server in hops (learned from what
+--   it hears), whether it is in contact (heard a server/relay in the last 30 s).
+-- Out of contact: status sends are skipped, events are buffered (coalesced, max 50) and sent as
+-- one `catchup` message when contact returns. Relays TMINER traffic for other turtles when
+-- that helps (ender modem: always; basic modem: only when it moves the message closer).
 
 local net = {}
 
 local PROTO        = "TMINER"
-local MAX_HOPS     = 4
+local MAX_HOPS     = 4        -- relay count limit (envelope `hops`)
 local DEDUPE_SIZE  = 256
 local INBOX_MAX    = 64
 local EV_STATUS    = "tminer_status"
 local EV_REPLY     = "tminer_reply"
+local CONTACT_MS   = 30000    -- heard a server/relay within this = in contact
+local HOP_LIMIT    = 8        -- hop distances at or above this mean "no route"
+local CATCHUP_MAX  = 50
+local FAR          = 400      -- blocks: beyond any basic modem's range (384 at build height)
+local HOUSEKEEP    = 2        -- s between contact checks in net.run
+-- Kinds only servers send: an old server without the `hop` field still counts as hop 0.
+local SERVER_KINDS = { fleet = true, cmd = true, home = true, update_manifest = true, file = true }
 
 local KNOWN_CMDS = {
     RETURN_HOME = true, PAUSE = true, RESUME = true, SET = true,
@@ -27,7 +40,10 @@ local inbox       = {}
 local waiting     = {}     -- replyKind -> number of pending requests
 local replies     = {}     -- replyKind -> msg
 local statusWanted = false
+local statusDeferred = false   -- a status was skipped out of contact: send the newest on contact
 local validator   = nil    -- optional fn(cmd, params) -> ok, err (used for the ack)
+
+local function now() return os.epoch("utc") end
 
 -- Fixed-size set: remembers the last n keys.
 local function newRing(n) return { n = n, set = {}, list = {}, i = 0 } end
@@ -45,19 +61,74 @@ local seen    = newRing(DEDUPE_SIZE)  -- envelope dedupe keys
 local cmdSeen = newRing(DEDUPE_SIZE)  -- cmd ids already queued (server retries)
 
 -- Modems ---------------------------------------------------------------------
+-- kind: "ender" if any wireless modem is an ender (advanced) modem, else "basic" if any
+-- wireless, else "wired" if any wired, else "none". Ender detection: the equipped upgrade's
+-- item name or the peripheral name contains "advanced"; or we heard a basic-modem sender from
+-- beyond any basic range (only an ender receiver can). Settings tminer.MODEM / tminer.RELAY
+-- only override.
+
+local modem = { kind = "none", ender = false, basic = false, wired = false, inferred = false }
+local relayMode = "auto"     -- "auto" | "on" | "off"
+
+local function setting(key)
+    if not (settings and settings.get) then return nil end
+    local ok, v = pcall(settings.get, "tminer." .. key)
+    if ok then return v end
+    return nil
+end
+
+local function readOverrides()
+    local r = setting("RELAY")
+    if r == nil then r = cfg.RELAY end
+    if r == true or r == "on" or r == "true" then relayMode = "on"
+    elseif r == false or r == "off" or r == "false" then relayMode = "off"
+    else relayMode = "auto" end
+end
+
+local function equippedName(side)
+    if not turtle then return nil end
+    local fn
+    if side == "left" then fn = turtle.getEquippedLeft elseif side == "right" then fn = turtle.getEquippedRight end
+    if type(fn) ~= "function" then return nil end
+    local ok, d = pcall(fn)
+    if ok and type(d) == "table" and type(d.name) == "string" then return d.name end
+    return nil
+end
+
+local function updateKind()
+    local o = setting("MODEM") or cfg.MODEM
+    if o == "ender" or o == "basic" or o == "wired" or o == "none" then modem.kind = o; return end
+    if modem.ender or (modem.inferred and modem.basic) then modem.kind = "ender"
+    elseif modem.basic then modem.kind = "basic"
+    elseif modem.wired then modem.kind = "wired"
+    else modem.kind = "none" end
+end
 
 local function openModems()
-    if not (peripheral and rednet) then return false end
+    modem.ender, modem.basic, modem.wired = false, false, false
+    if not (peripheral and rednet) then updateKind(); return false end
     local okN, names = pcall(peripheral.getNames)
-    if not okN or type(names) ~= "table" then return false end
+    if not okN or type(names) ~= "table" then updateKind(); return false end
     local wireless, wired = {}, {}
     for _, n in ipairs(names) do
         local okT, t = pcall(peripheral.getType, n)
         if okT and t == "modem" then
             local okW, w = pcall(peripheral.call, n, "isWireless")
-            if okW and w then wireless[#wireless + 1] = n else wired[#wired + 1] = n end
+            if okW and w then
+                wireless[#wireless + 1] = n
+                local item = equippedName(n)
+                if (item and string.find(item, "advanced", 1, true)) or string.find(n, "advanced", 1, true) then
+                    modem.ender = true
+                else
+                    modem.basic = true
+                end
+            else
+                wired[#wired + 1] = n
+                modem.wired = true
+            end
         end
     end
+    updateKind()
     local any = false
     local function open(n)
         local ok = pcall(rednet.open, n)
@@ -77,16 +148,102 @@ function net.online()
     return ok and open == true
 end
 
-function net.init(c)
-    if type(c) == "table" then cfg = c end
-    openModems()
-    if net.online() then return true end
-    return false, "no modem"
+function net.modemKind() return modem.kind end
+
+-- Hops (distance to the server) ------------------------------------------------
+-- neigh[id] = {hop, t}: what each directly heard transmitter says its distance is. My hop is
+-- 1 + the smallest fresh one (split horizon: adverts derived from me are ignored).
+-- nodeHop[id] = {hop, t}: an origin's own distance (`ohop`), used to relay towards it.
+
+local neigh, nodeHop = {}, {}
+local everHeard, graceUntil = false, now() + CONTACT_MS
+local lastHeard = 0
+
+function net.hop()
+    local t, best, via = now(), nil, nil
+    for id, e in pairs(neigh) do
+        if t - e.t > CONTACT_MS then
+            neigh[id] = nil
+        elseif not best or e.hop < best then
+            best, via = e.hop, id
+        end
+    end
+    if best and best + 1 < HOP_LIMIT then return best + 1, via end
+    return nil
 end
 
-function net.setValidator(fn) validator = fn end
+-- In contact: heard a server or relay (anything carrying a hop distance) in the last 30 s.
+-- Right after boot, before anything was heard, the first 30 s count as contact.
+function net.inContact()
+    if not net.online() then return false end
+    if net.hop() then return true end
+    return (not everHeard) and now() < graceUntil
+end
+
+-- Catch-up buffer ------------------------------------------------------------------
+-- buf: events not (known to be) delivered; sentLog: events sent but not yet confirmed by
+-- hearing a server/relay afterwards (re-buffered if contact turns out to be lost).
+
+local buf, sentLog, dropped = {}, {}, 0
+local evSeq = 0
+
+local function coKey(level, text)
+    local k = string.gsub(text, "%d+", "#")
+    return tostring(level) .. "|" .. k
+end
+
+local function bufferAdd(e)
+    local key = coKey(e.level, e.text)
+    for i = #buf, 1, -1 do
+        local b = buf[i]
+        if b.key == key then
+            b.n = b.n + (e.n or 1)
+            if (e.last or e.ts) > (b.last or b.ts) then b.last = e.last or e.ts; b.text = e.text end
+            return
+        end
+    end
+    buf[#buf + 1] = { key = key, eid = e.eid, ts = e.ts, last = e.last or e.ts, n = e.n or 1, level = e.level, text = e.text }
+    while #buf > CATCHUP_MAX do
+        local idx = 1
+        for i, b in ipairs(buf) do if b.level == "info" then idx = i; break end end
+        table.remove(buf, idx)
+        dropped = dropped + 1
+    end
+end
+
+local function confirmSent(upTo)
+    local i = 1
+    while i <= #sentLog do
+        if sentLog[i].sentAt <= upTo then table.remove(sentLog, i) else i = i + 1 end
+    end
+end
+
+local function rebufferSent()
+    local list = sentLog
+    sentLog = {}
+    local old = buf
+    buf = {}
+    for _, e in ipairs(list) do bufferAdd(e) end
+    for _, e in ipairs(old) do bufferAdd(e) end
+end
+
+function net.pendingEvents() return #buf, dropped end
 
 -- Sending --------------------------------------------------------------------
+
+local function copy(t)
+    local c = {}
+    for k, v in pairs(t) do c[k] = v end
+    return c
+end
+
+local function stampHop(msg)
+    local h, via = net.hop()
+    msg.ohop = h
+    msg.hop = (relayMode ~= "off") and h or nil
+    msg.via = via
+    msg.mk = modem.kind
+end
 
 function net.send(kind, to, body)
     if not net.online() then return false end   -- blind turtle: no work at all
@@ -97,21 +254,125 @@ function net.send(kind, to, body)
     end
     msg.v, msg.kind, msg.from = 1, kind, myId
     msg.to = to or "server"
-    msg.boot, msg.seq, msg.ts, msg.hops = bootId, seq, os.epoch("utc"), 0
+    msg.boot, msg.seq, msg.ts, msg.hops = bootId, seq, now(), 0
+    stampHop(msg)
+    ringAdd(seen, tostring(myId) .. ":" .. tostring(bootId) .. ":" .. tostring(seq))
     -- Broadcast so every server (and relay) hears it; `to` says who it's for.
     local ok = pcall(rednet.broadcast, msg, PROTO)
     return ok
 end
 
+-- Events: sent at once in contact (kept until confirmed), buffered for `catchup` otherwise.
 function net.event(level, text)
-    return net.send("event", "server", {
-        level = level or "info",
-        text = string.sub(tostring(text), 1, 200),
-    })
+    if not net.online() then return false end
+    evSeq = evSeq + 1
+    local e = { eid = myId .. ":" .. bootId .. ":" .. evSeq, ts = now(), level = level or "info",
+                text = string.sub(tostring(text), 1, 200) }
+    if net.inContact() then
+        e.sentAt = e.ts
+        sentLog[#sentLog + 1] = e
+        while #sentLog > CATCHUP_MAX do table.remove(sentLog, 1) end
+        return net.send("event", "server", { level = e.level, text = e.text, eid = e.eid })
+    end
+    bufferAdd(e)
+    return false
+end
+
+local function sendCatchup()
+    if #buf == 0 then return end
+    local list, t = {}, now()
+    for _, b in ipairs(buf) do
+        list[#list + 1] = { eid = b.eid, ts = b.ts, last = b.last, n = b.n, level = b.level, text = b.text }
+        b.sentAt = t
+        sentLog[#sentLog + 1] = b
+    end
+    while #sentLog > 2 * CATCHUP_MAX do table.remove(sentLog, 1) end
+    net.send("catchup", "server", { events = list, dropped = dropped })
+    buf, dropped = {}, 0
 end
 
 local function ack(to, id, ok, err)
     net.send("ack", to or "server", { id = id, ok = ok and true or false, err = err })
+end
+
+-- Relaying -------------------------------------------------------------------------
+-- Every relay waits a small random delay; a copy heard meanwhile from a node that already
+-- moved the message as far (or an ender modem, which everyone hears) cancels ours.
+
+local pendingRelay, relayTimers = {}, {}
+net.stats = { relayed = 0, cancelled = 0 }
+
+local function knownHop(id)
+    local e = id and nodeHop[id]
+    if e and now() - e.t <= 10 * CONTACT_MS then return e.hop end
+    return nil
+end
+
+-- Returns the relay mode ("ender"|"flood"|"up"|"down") or nil.
+local function relayModeFor(msg, myHop)
+    if relayMode == "off" or modem.kind == "none" then return nil end
+    if (tonumber(msg.hops) or 0) >= MAX_HOPS then return nil end
+    local senderEnder = msg.mk == "ender" and not modem.wired   -- everyone already heard it
+    if modem.kind == "ender" then return (not senderEnder) and "ender" or nil end
+    if relayMode == "on" then return (not senderEnder) and "flood" or nil end
+    if senderEnder or myHop == nil then return nil end
+    local to = msg.to
+    if to == "all" then return nil end
+    local senderHop = tonumber(msg.hop)
+    local dest
+    if to == "server" then dest = 0 else dest = knownHop(tonumber(to)) end
+    if dest == nil then
+        if msg.ohop == 0 then return nil end   -- from a server to someone we don't know
+        dest = 0                               -- from a turtle/pocket: towards the server
+    end
+    if dest == 0 then
+        if senderHop == nil or myHop < senderHop then return "up" end
+        return nil
+    end
+    if myHop < dest and (senderHop == nil or senderHop <= myHop) then return "down" end
+    return nil
+end
+
+local function scheduleRelay(key, msg, mode)
+    if pendingRelay[key] then return end
+    local okT, id = pcall(os.startTimer, 0.05 + math.random() * 0.3)
+    if not okT then return end
+    pendingRelay[key] = { msg = copy(msg), mode = mode, timer = id }
+    relayTimers[id] = key
+end
+
+local function maybeCancel(key, dup)
+    local p = pendingRelay[key]
+    if not p then return end
+    local myHop = net.hop()
+    local h = tonumber(dup.hop)
+    local cancel = false
+    if dup.mk == "ender" and not modem.wired then cancel = true
+    elseif p.mode == "up" then cancel = h ~= nil and myHop ~= nil and h <= myHop
+    elseif p.mode == "down" then cancel = h ~= nil and myHop ~= nil and h >= myHop
+    elseif p.mode == "ender" then cancel = dup.mk == "ender" end
+    if cancel then
+        pendingRelay[key] = nil
+        relayTimers[p.timer] = nil
+        pcall(os.cancelTimer, p.timer)
+        net.stats.cancelled = net.stats.cancelled + 1
+    end
+end
+
+local function fireRelay(timerId)
+    local key = relayTimers[timerId]
+    if not key then return false end
+    relayTimers[timerId] = nil
+    local p = pendingRelay[key]
+    pendingRelay[key] = nil
+    if p and net.online() then
+        local c = p.msg
+        c.hops = (tonumber(c.hops) or 0) + 1
+        local h, via = net.hop()
+        c.hop, c.via, c.mk = h, via, modem.kind
+        if pcall(rednet.broadcast, c, PROTO) then net.stats.relayed = net.stats.relayed + 1 end
+    end
+    return true
 end
 
 -- Receiving ------------------------------------------------------------------
@@ -143,16 +404,42 @@ local function handleCmd(msg)
     if c == "REQUEST_STATUS" then net.statusNow() end
 end
 
+-- What a heard message tells us about distances and contact.
+local function learn(sender, msg)
+    local h = tonumber(msg.hop)
+    local hops = tonumber(msg.hops) or 0
+    if h == nil and msg.hop == nil and msg.ohop == nil and hops == 0 and SERVER_KINDS[msg.kind] then h = 0 end
+    local t = now()
+    if h and h >= 0 and h < HOP_LIMIT and type(sender) == "number" and sender ~= myId and msg.via ~= myId then
+        neigh[sender] = { hop = h, t = t }
+        everHeard = true
+        lastHeard = t
+        confirmSent(t - 1000)
+    end
+    local oh = tonumber(msg.ohop)
+    if oh == nil and hops == 0 then oh = h end
+    if oh and type(msg.from) == "number" then nodeHop[msg.from] = { hop = oh, t = t } end
+end
+
 -- Idempotent: both net.run and net.request may call it for the same event;
 -- the dedupe ring makes sure each message is processed once.
-local function handle(msg)
+local function handle(msg, sender)
     if type(msg) ~= "table" or msg.v ~= 1 or type(msg.kind) ~= "string" then return end
-    if msg.from == myId then return end
     if type(msg.hops) == "number" and msg.hops > MAX_HOPS then return end
     local key = tostring(msg.from) .. ":" .. tostring(msg.boot) .. ":" .. tostring(msg.seq)
-    if ringHas(seen, key) then return end
+    if ringHas(seen, key) then
+        if sender ~= nil then learn(sender, msg) end
+        maybeCancel(key, msg)
+        return
+    end
     ringAdd(seen, key)
+    if sender ~= nil then learn(sender, msg) end
+    if msg.from == myId then return end
     local to = msg.to
+    if to ~= myId and tonumber(to) ~= myId then
+        local mode = relayModeFor(msg, (net.hop()))
+        if mode then scheduleRelay(key, msg, mode) end
+    end
     if to ~= "all" and tonumber(to) ~= myId then return end
     if msg.kind == "cmd" then
         handleCmd(msg)
@@ -165,7 +452,20 @@ local function handle(msg)
 end
 
 local function onEvent(ev)
-    if ev[1] == "rednet_message" and ev[4] == PROTO then handle(ev[3]) end
+    local e = ev[1]
+    if e == "rednet_message" and ev[4] == PROTO then
+        handle(ev[3], ev[2])
+    elseif e == "timer" then
+        fireRelay(ev[2])
+    elseif e == "modem_message" then
+        -- A basic-modem sender heard from beyond any basic range: our modem is an ender modem.
+        local p, d = ev[5], ev[6]
+        if not modem.inferred and type(p) == "table" and p.sProtocol == PROTO and type(p.message) == "table"
+            and p.message.mk == "basic" and type(d) == "number" and d > FAR then
+            modem.inferred = true
+            updateKind()
+        end
+    end
 end
 
 -- Queue a command typed on the turtle itself (no network needed).
@@ -184,6 +484,16 @@ function net.statusNow()
     statusWanted = true
     os.queueEvent(EV_STATUS)
 end
+
+function net.init(c)
+    if type(c) == "table" then cfg = c end
+    readOverrides()
+    openModems()
+    if net.online() then return true end
+    return false, "no modem"
+end
+
+function net.setValidator(fn) validator = fn end
 
 -- Safe from the worker coroutine while net.run runs in parallel: parallel
 -- hands every event to both coroutines, and handle() is deduped.
@@ -217,13 +527,34 @@ end
 
 local function sendStatus(getStatus)
     if not net.online() then return end   -- nobody to tell: don't build the status table
+    if not net.inContact() then statusDeferred = true; return end
+    statusDeferred = false
     local ok, st = pcall(getStatus)
     if ok and type(st) == "table" then net.send("status", "server", st) end
+end
+
+-- Contact came back: catch-up log first, then the newest status. Contact lost: events sent
+-- since we last heard anyone may not have arrived; keep them for the catch-up.
+local wasContact = nil
+local function checkContact(getStatus)
+    if not net.online() then return end
+    local c = net.inContact()
+    if c and wasContact == false then
+        sendCatchup()
+        if statusDeferred then statusWanted = true end
+    elseif c and #buf > 0 and net.hop() then
+        sendCatchup()
+    elseif not c and wasContact then
+        rebufferSent()
+    end
+    wasContact = c
 end
 
 -- Coroutine body. Never returns (except by "Terminated").
 function net.run(getStatus)
     local timer = os.startTimer(interval())
+    local hk = net.online() and os.startTimer(HOUSEKEEP) or nil
+    wasContact = net.inContact()
     sendStatus(getStatus)
     while true do
         local ev = { os.pullEvent() }
@@ -231,11 +562,15 @@ function net.run(getStatus)
         if e == "timer" and ev[2] == timer then
             statusWanted = true
             timer = os.startTimer(interval())
+        elseif e == "timer" and ev[2] == hk then
+            hk = net.online() and os.startTimer(HOUSEKEEP) or nil
         elseif e == "peripheral" or e == "peripheral_detach" then
             openModems()
+            if not hk and net.online() then hk = os.startTimer(HOUSEKEEP) end
         else
             onEvent(ev)
         end
+        checkContact(getStatus)
         if statusWanted then
             statusWanted = false
             sendStatus(getStatus)

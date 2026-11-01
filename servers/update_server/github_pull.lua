@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- Pulls newer TurtleMiner files from GitHub into the update server's folder
 -- (and the server's own programs). Used by update_server at boot and every
 -- tminer.pull_minutes (default 60, 0 = boot only).
@@ -25,6 +25,7 @@ M.SERVER = {
     { "servers/update_server/update_server.lua", "update_server.lua" },
     { "servers/update_server/github_pull.lua", "github_pull.lua" },
     { "servers/startup.lua", "monitor_startup.lua" },
+    { "servers/relay.lua", "relay.lua" },
 }
 
 local function versionOf(text)
