@@ -221,3 +221,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-01 | coordinator | Cluster merged (f1aed0f); setup.lua conflict resolved (keeps safe writes). README updated for tminer_server. |
 | 2026-11-01 | coordinator | Join code changed per user: 4-word phrase (1024-word list, ~40 bits, slowed key derivation), plus no-typing joins: floppy disk, approve on monitor. Sent to MU-0 agent. |
 | 2026-11-01 | MU-0 agent | MU-0 done: tmcrypto/tmwords/tmjoin, every message signed (128-bit HMAC tag, canonical sorted-key form, `net` tag pre-filter), replay window, join by words/disk/approve, NET screen, sim default network. Status message = 9 SHA blocks (~1.4 ms on the sim host); key derivation 1024 rounds (~0.15 s sim host). Scenarios 52-55. |
+| 2026-11-01 | coordinator | MU-0 merged (d3efd91): 4-word phrase, signed messages, disk/approve join. Suite 56/56. Existing installs need setup network / install --network once. |
