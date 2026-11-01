@@ -197,3 +197,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-01 | coordinator | Comms merged (5788e0c). Suite 47/47. Next: Cluster + GPS (CG-0..CG-4). |
 | 2026-11-01 | coordinator | User hit 'attempt to index local f (nil)' in setup.lua: fs.open unchecked. Now: moves a file blocking a needed folder aside, reports folder/read-only/disk-full with free space, writes via .tmp. |
 | 2026-11-01 | coordinator | README rewritten as a full user guide (install per role, using it, networking, GPS, clustering marked coming, updates, settings, help messages, troubleshooting, dev notes). |
+| 2026-11-01 | coordinator | User report: turtle frozen to commands after RETURN_HOME. Not reproduced on current code (scenario 51: IDLE acks STATUS/SET/PAUSE/RETURN_HOME/UPDATE, RESUME works twice). Asked user for version + what the card shows. |
