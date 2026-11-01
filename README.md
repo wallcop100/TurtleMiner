@@ -1,249 +1,332 @@
 # TurtleMiner
 
-A branch-mining program for CC:Tweaked turtles, with a central monitor (touchscreen or pocket computer) and an update server. The turtle saves its position before every move, so it survives server restarts and chunk unloads, reports what it is doing, and tells you plainly when it needs help. It never stops to ask questions after setup.
+Branch mining for CC:Tweaked turtles that keeps going on its own. Turtles save their position before every move, survive server restarts and chunk unloads, burn the coal they find, and say plainly when they need help. A monitor (computer screen, monitor wall or pocket computer) shows the whole fleet and sends commands. It works with no modem at all, basic modems, ender modems, wired networks, or any mix, on basic or advanced hardware. Everything is detected automatically; settings only override.
 
-Parts:
+> Status: the turtle, monitor, comms and update server are done and tested in a simulator (47 scenarios). **Server clustering and the GPS setup offer are being built** (sections marked *coming*). Nothing here has been signed off in a live world yet; please report what you see.
 
-| Part | Files | Runs on |
-|------|-------|---------|
-| Miner | `miner/*.lua` | each mining turtle |
-| Monitor | `servers/central_monitor.lua`, `servers/startup.lua` | a computer with a monitor, or a pocket computer |
-| Update server | `servers/update_server/*.lua` | any computer with a modem (can be the monitor computer) |
+Contents: [Quick start](#quick-start) · [What you need](#what-you-need) · [Install](#install) · [Using it](#using-it) · [Networking](#networking) · [GPS](#gps) · [Clustering](#clustering-coming) · [Updates](#updates) · [Settings](#settings) · [Phases and help messages](#phases-and-help-messages) · [Troubleshooting](#troubleshooting) · [For developers](#for-developers)
 
-`farmer/` is a separate, older program and is not covered here.
+---
 
-## Hardware
+## Quick start
 
-- **Turtle** (advanced is nicer, not required) with a **pickaxe** equipped and a **wireless or ender modem** on the other side. Without a modem it still mines, but nothing can see or command it.
-- **At home**: a chest **behind or beside** the turtle (not below: the shaft goes straight down from the home spot) for loot. Optional second chest with coal/charcoal as a **fuel chest** (detected automatically: an inventory that is mostly fuel). Works without a fuel chest, or with unlimited fuel.
-- **Not on the modem side**: the turtle can't see a chest on the side where its modem is equipped (the modem takes that side). Put chests behind, on top, or on the pickaxe side.
-- **Optional GPS** (4 GPS hosts). With GPS the turtle uses world coordinates and re-checks its position; without GPS it counts moves from home. Each turtle decides at boot. On its first start a GPS turtle works out which way it faces by stepping one block and back: leave a free block **in front of or behind** the home spot, or **above** it (with a free block in front of that one).
-- **Server computer** with a wireless/ender modem. If turtles are far away, use ender modems, or several modems on the server (it relays `TMINER` messages between them).
+All commands need CC's HTTP API (on by default). `BASE` below means `https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss` (will become `.../main` once merged).
 
-### Space and chunks
+1. **Main computer** (with a modem; a monitor is optional):
+   ```
+   wget run BASE/setup.lua server
+   reboot
+   ```
+2. **Each turtle**, standing on its home spot with a chest behind or beside it:
+   ```
+   wget BASE/miner/install.lua install.lua
+   install
+   ```
+   Answer the questions (name, mining Y, ore, corridors, and the home Y if there's no GPS). It starts mining after a reboot.
+3. **Optional**: a pocket computer (`wget run BASE/setup.lua pocket`), extra monitor computers (`... monitor`), relay computers (`... relay`).
 
-- The grid is big. From the home spot the shaft goes down to `TARGET_Y`, then the spine runs to the **right** of the home facing for `MAX_CORRIDORS * (2*BRANCH_LENGTH + BRANCH_SPACING)` blocks (536 with the defaults), and each corridor's main tunnel runs `MAIN_LENGTH` (64) forward. Branches reach `BRANCH_LENGTH` (32) to each side of a main.
-- Keep the home and the mining area **chunk-loaded** (chunk loader, or a player nearby) if you can. With the defaults that is far more than the chunks around one player. If a chunk unloads, the turtle stops and resumes where it was when the chunk loads again; lower `MAX_CORRIDORS`/`BRANCH_LENGTH` to keep the area small.
-- **Several turtles**: their grids must not overlap. Space the homes further apart than the grid size above, or face them in different directions (the grid goes forward and to the right of each home).
-- The turtle **attacks anything standing in its way** (mobs, and players too). Don't stand in its tunnels. Something that never moves makes it give up after `STUCK_TIMEOUT` and retry later (see `NEEDS_HELP`).
+No server at all? On the turtle: `wget run BASE/setup.lua turtle`, then `install`.
+
+If GitHub serves an old file right after an update, add `?v=2` (any number) to the URL to skip its 5-minute cache.
+
+---
+
+## What you need
+
+### Turtle
+- Any mining turtle, basic or advanced (advanced turtles hold 100 000 fuel instead of 20 000; the miner reads the real limit).
+- A **pickaxe** equipped. A **modem** on the other side is optional: wireless (basic), ender, or none.
+- Some fuel to start (coal in its inventory is fine). It burns the coal it mines from then on.
+
+### Home spot
+- The turtle's starting block is home. The shaft goes **straight down** from it.
+- A **chest** (or barrel, shulker box) **behind or beside** the turtle. **Not below** (that's the shaft) and **not on the modem's side** (the turtle can't see a chest there).
+- Optional **fuel chest**: a second chest holding mostly coal/charcoal. Detected automatically; the turtle tops up from it.
+- A turtle that gets a GPS fix at home works out which way it faces by stepping once: leave one free block in front, behind, or above (with a free block in front of that one). Without GPS this isn't needed.
+
+### Space
+- With the defaults a turtle mines a big area: down to `TARGET_Y`, then a spine to the **right** of the way it faced at setup, up to `MAX_CORRIDORS × (2×BRANCH_LENGTH + BRANCH_SPACING)` = 536 blocks, with 64-block corridors forward and 32-block branches each side.
+- **Chunks**: turtles only work in loaded chunks. If you walk away, a turtle freezes and resumes where it was when the chunk loads again. Lower `MAX_CORRIDORS` / `BRANCH_LENGTH` to keep the area near you.
+- **Several turtles**: their areas must not overlap. Space homes further apart than the area above, or face them in different directions. (Shared tunnels for a group of turtles are planned: see `docs/ARMY_PLAN.md`.)
+- Turtles **attack anything in their way**, players included. Don't stand in the tunnels.
+
+### Computers (optional)
+Any computer, basic or advanced. A monitor of any size (touch on advanced monitors, keyboard on basic). A pocket computer with a modem. Nothing needs colour, a mouse or multishell.
+
+---
 
 ## Install
 
-### Quick setup (HTTP API enabled in CC)
+`setup.lua` downloads the right files for each device. Run it with one of these roles:
 
-One command per computer. `setup.lua` downloads everything from the `claude/vigilant-pasteur-g2krss` branch (change `BRANCH` at its top once this is merged to `main`).
-
-```
-wget run https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss/setup.lua server
-```
-
-Use `server` on the main computer (monitor + update server, files in `/files/`), `monitor` for extra monitor computers, `pocket` on a pocket computer, `relay` on a plain computer that only extends the network (see "Comms"). Reboot each one afterwards. Then on each turtle at its home spot:
-
-```
-wget https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss/miner/install.lua install.lua
-install
-```
-
-The installer pulls the miner files from the update server. With no update server, run `setup turtle` on the turtle first, then `install`.
-
-### Manual setup
-
-The examples use `wget` from GitHub; copying from a floppy disk works the same way. CC has no shell variables: wherever you see `BASE`, type `https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss` (or `.../main` once merged).
-
-### 1. Update server (do this first)
-
-On the server computer:
+| Role | Use on | Installs | Starts at boot |
+|------|--------|----------|----------------|
+| `server` | Main computer | Monitor UI, update server, GitHub auto-pull, miner files in `/files/` | Monitor + update server |
+| `monitor` | Extra computer with a monitor | Monitor UI | Monitor |
+| `pocket` | Pocket computer | Monitor UI (phone layout) | Monitor |
+| `relay` | Any spare computer | `relay.lua` | Relay |
+| `turtle` | A turtle with no server around | All miner files | (run `install` next) |
 
 ```
-wget BASE/servers/update_server/update_server.lua update_server.lua
-wget BASE/servers/update_server/startup.lua startup.lua
-mkdir /files
+wget run BASE/setup.lua <role>
+reboot
 ```
 
-Copy every file from `miner/` into `/files/` (`config.lua`, `state.lua`, `nav.lua`, `inv.lua`, `mine.lua`, `net.lua`, `miner.lua`, `updater.lua`, `install.lua`, `startup.lua`), e.g. `wget BASE/miner/nav.lua /files/nav.lua`. Then `reboot`.
+Running it again updates the files. If something can't be written, it says why: a folder in the way, read-only, or the disk is full (each computer has about 1 MB). A plain file sitting where a folder is needed is moved to `<name>.old`.
 
-**Auto-pull from GitHub:** the update server checks GitHub at boot and then every 60 minutes, and copies in any file whose `-- Version:` line is newer (only if it compiles). It also updates its own programs (`central_monitor.lua`, `update_server.lua`) and reboots once when they change. Settings on the server: `set tminer.pull_minutes 0` = boot only, `set tminer.auto_pull false` = off, `set tminer.repo_base <raw URL ending in />` to pull from another branch (e.g. `main` after merging). Needs the HTTP API.
-
-The server reads the version from each file's first line (`-- Version: x.y.z`) and serves the files to turtles that ask. To roll out a change, bump the version line and drop the file in `/files/`: no restart needed. Turtles pick it up the next time they boot at home, or when you send `UPDATE`. A folder `/files/miner/`, if present, is used instead of `/files/` for miners.
-
-If the monitor runs on the same computer, its `startup.lua` and this one collide: rename this one, and add `shell.openTab("update_server")` to the monitor's startup.
-
-### 2. Turtle
-
-One command, at the turtle's home spot (chest behind or beside, not below):
-
+### Turtle: `install`
+Run on the turtle, at its home spot:
 ```
 wget BASE/miner/install.lua install.lua
 install
 ```
+It:
+1. Checks for a pickaxe, a modem (optional) and fuel.
+2. Fetches any missing miner files from the update server (or tells you to run `setup turtle` if there isn't one).
+3. Asks: name, mining Y (`TARGET_Y`), ore focus, corridors before stopping, and the **home Y** if it can't get a GPS fix (read it from F3; it must be the turtle's own block).
+4. If old miner state exists, asks whether this is a **new home spot**. Yes clears the old state and tells the servers to forget the old home.
+5. Writes the settings and `startup.lua`.
 
-The installer checks modem, pickaxe and fuel, fetches all miner files from the update server and asks four questions: name, mining Y, ore focus, number of corridors (five without GPS: it also asks the home Y level). If the turtle has old miner state it also asks whether this is a new home spot (answer yes when you moved it). With no state left it tells the servers to forget the turtle's old home, so the spot it starts on becomes home. Then it writes the settings and `startup.lua`; `install --default` skips the questions (and keeps old state). Finally reboot, or run `miner`.
+`install --default` skips the questions.
 
-No update server? Copy the `miner/*.lua` files onto the turtle by hand (disk or `wget`), then run `install`.
+### Manual install
+Copy the files yourself (disk or `wget`), e.g. `wget BASE/miner/nav.lua nav.lua`.
+- Turtle: everything in `miner/` to the turtle's root, then `install`.
+- Server: `servers/central_monitor.lua`, `servers/startup.lua` (as `monitor_startup.lua`), `servers/update_server/update_server.lua`, `servers/update_server/github_pull.lua`, and `miner/*` into `/files/`. Make `startup.lua` run both:
+  ```lua
+  parallel.waitForAny(
+      function() shell.run("update_server") end,
+      function() shell.run("monitor_startup") end)
+  ```
 
-### 3. Monitor
+---
 
-On a computer with a monitor attached:
+## Using it
 
-```
-wget BASE/servers/central_monitor.lua central_monitor.lua
-wget BASE/servers/startup.lua startup.lua
-```
+### The monitor
+Shows every turtle: phase, reason, fuel against what it needs to get home, distance, position, job, ores, last seen, last error. Problem turtles (`NEEDS_HELP`, `ERROR`, overdue) go to the top, marked `!`, red on colour screens, with a beep if a speaker is attached.
 
-Check the peripheral sides at the top of `startup.lua`, then `reboot`.
-
-### 4. Pocket computer
-
-Needs a wireless (or ender) pocket computer:
-
-```
-wget BASE/servers/central_monitor.lua central_monitor.lua
-central_monitor
-```
-
-It detects that it is a pocket computer and shows the fleet the server sends every 5 s. Commands go through the server.
-
-### Using the monitor
-
-Touch a turtle (or click it on the pocket screen) to see its details and commands. On a basic computer (no mouse) use the arrow keys or Tab to move the `>` marker and Enter to press. Commands to a turtle that is out of range are shown as `queued` and are sent when it is next heard.
+Open a turtle with touch (advanced monitor), click (advanced computer/pocket), or the keyboard (arrows/Tab move the `>` marker, Enter presses). Commands to a turtle that's out of range show `queued` and are delivered when it's next heard.
 
 | Button | Does |
 |--------|------|
-| RETURN HOME | Go home, unload, wait `IDLE` |
-| PAUSE / RESUME | Stop where it is / carry on (also leaves `IDLE`, `NEEDS_HELP`, and `DONE` after a raise or reset) |
+| RETURN HOME | Go home, unload, wait (`IDLE`) |
+| PAUSE / RESUME | Stop where it is / carry on (also leaves `IDLE`, `NEEDS_HELP`, and `DONE` after raising `MAX_CORRIDORS` or a reset) |
 | STATUS | Ask for a status now |
 | TARGET Y, FOCUS ORE | Shortcuts for the two most used settings |
-| SET... | Pick any remote key (table below), then enter a number on the keypad, choose TRUE/FALSE, or pick the ore |
-| UPDATE | Update next time it is home, then carry on |
-| RESET JOB | (asks first) Restart the grid at corridor 0 next time it is home |
-| RESET HOME | (asks first) "It is at its home now": use the current spot as home |
+| SET... | Change any remote setting (list under [Settings](#settings)) |
+| UPDATE | Update next time it's home, then carry on |
+| RESET JOB | (asks first) Start the grid over at corridor 0 next time it's home |
+| RESET HOME | (asks first) "It's at its home now": use the current spot as home |
 | REBOOT | (asks first) Save and restart the turtle |
 
-## Comms: modems and range (all automatic)
+The event log is kept in `miner_events.log` on the server (last 500 lines).
 
-Nothing to configure: every turtle and computer works out what modem it has (none, basic, ender, wired), how far it is from the server (hops) and whether it is in contact, and keeps checking. Settings only override (`tminer.MODEM`, `tminer.RELAY`). Details in `docs/COMMS.md`.
-
-A basic (wireless) modem reaches 64 blocks at or below Y 96 (more higher up, 384 at build height). A message arrives when either end is in range of the other. An ender modem reaches the whole dimension: if either end has one, the message arrives.
-
-| Setup | What happens |
-|-------|--------------|
-| No modems | Turtles run blind; keyboard controls on the turtle; no monitor. |
-| Basic modems only | Contact near home. About 60 blocks down the shaft a turtle goes out of range: before leaving home it sends `away` with an ETA, the monitor shows `AWAY away, back by ~hh:mm` instead of an alarm, and alerts (`LATE!`) only when it is 50% + 2 min overdue or reports `NEEDS_HELP`/`ERROR`. Commands sent meanwhile are queued and delivered when it is heard again. Events it saw while out of contact (veins, problems) arrive in one catch-up log, merged into the event log at their real times. Turtles near each other relay for each other when that brings a message closer to the server. |
-| Basic + a relay computer | `setup relay` on a computer with a basic modem at the shaft bottom covers 64 blocks around it. |
-| One ender modem anywhere | On the server, a relay computer or one turtle: every turtle with any modem is in contact everywhere. |
-| Wired modems | Every computer running our software relays between all its modems, so wired-only computers (a server deep in a base) reach the turtles through any computer that also has a wireless modem, and separate wired networks joined by one wireless computer work as one network. |
-| 4 ender modems on the GPS hosts | GPS fixes at any depth. |
-
-A turtle counts as in contact when it heard a server or relay in the last 30 s. Out of contact it skips its status messages and buffers events (max 50, repeats coalesced); the newest status and the catch-up log go out as soon as contact returns. Everything (server, relay) also runs on basic computers: no colour, mouse, touch or multishell needed.
-
-## Running without a monitor or modem
-
-A turtle works on its own: no modem, no server, no GPS needed. Without a modem it uses `HOME_Y` (the installer asks) and its own move journal for position. Install with `setup.lua turtle` (needs only the HTTP API), then `install`.
-
-Keyboard controls on the turtle's screen (work with or without a monitor):
+### The turtle's own screen and keys
+Top of the turtle's screen:
+```
+MINING                            T1
+(reason, e.g. why it needs help)
+pos -2,-58,-14 f1  fuel 4812
+job c0 b3R s7  ores 42
+--------------------- keys: R P B S H ?
+```
+`pos` is world coordinates with GPS, otherwise relative to home (`0,HOME_Y,0`, `f0` = the way it faced at setup). `LOST` means it no longer trusts its position.
 
 | Key | Does |
 |-----|------|
-| `R` | Resume (from PAUSED, IDLE, DONE after raising MAX_CORRIDORS, or NEEDS_HELP) |
+| `R` | Resume |
 | `P` | Pause where it is |
 | `B` | Return home and wait |
 | `S` | Print phase, reason, position, fuel |
-| `H` twice within 5 s | "This spot is home" (same as RESET_HOME) |
-| `?` | Show the key list |
+| `H` twice within 5 s | "This spot is home" (same as RESET HOME) |
+| `?` | Show the keys |
 
-Change settings with `set tminer.<KEY> <value>` and reboot. Without a monitor you only see problems on the turtle's own screen; rebooting a turtle in NEEDS_HELP retries.
+These work with or without a monitor, so a turtle with no modem is fully usable.
 
-### Blind turtles (no modem, no GPS)
+### How a turtle mines
+- Digs a 1×1 shaft from home to `TARGET_Y`, then a spine to the right, corridors forward from the spine, and branches to both sides every `BRANCH_SPACING` blocks (3 = every block of rock is seen).
+- On every new block it checks all faces for ore (`deepslate_` variants and 1.18 raw ore blocks count; modded ores tagged `c:ores`/`forge:ores` too). With `VEIN_MINING` it follows the vein, then backs out the way it came.
+- Drops junk (`TRASH`) in the tunnel when nearly full; heads home when full or when fuel gets close to what it needs to get back along its real tunnel route.
+- At home: burns coal up to `FUEL_TARGET`, keeps `FUEL_KEEP` fuel items, sends extra fuel to the fuel chest, and unloads everything else.
+- Walks home through its own tunnels and never digs chests, barrels, shulkers, computers or other turtles. Gravel, falling dripstone and mobs are waited out; lava and water don't stop it.
 
-- **Screen**: the top 5 lines of the turtle's screen are a status block, redrawn on every phase change and every 10 s; log lines scroll below it:
+### Crash and unload recovery
+Every move and turn is written to a journal before it happens. After a restart the turtle works out where it is from the journal, its fuel (each move costs exactly 1), the block in front, GPS if it can get a fix here, and if needed by looking round at its four neighbours and matching them against the tunnels it knows. In a simulated run, 442 of 448 crashes mid-turn recovered with no GPS. When it can't be sure, it stops and says so (`NEEDS_HELP`), it never guesses. Optional `SURFACE_IF_LOST` makes a lost turtle dig straight up to the surface and wait there instead.
 
-  ```
-  MINING                            T1
-  (reason, e.g. why it needs help)
-  pos -2,-58,-14 f1  fuel 4812
-  job c0 b3R s7  ores 42
-  --------------------- keys: R P B S H ?
-  ```
-  `pos` is relative to home (home = 0,HOME_Y,0, `f0` = the way it faced at setup). `LOST` after the position means it no longer trusts it.
-- **Crash during a turn** (chunk unloaded, server stopped): the turtle can't tell from fuel whether the turn happened. It turns round once on the spot, looks at all four neighbours and compares them with the cells it knows are open: the tunnel cells its job has finished, every cell in its move journal (always including the one it came from), and the storage next to home. Only when exactly one facing fits does it carry on; caves, ore veins and water/lava count as "unknown", never as evidence. A turn crash in the shaft makes it climb home (vertical moves need no facing) and check against the chest there. In a simulated 2-corridor run, 442 of 448 turn crashes now recover on their own (26 before); the 6 left are turns during the very first home scan, before it has seen its chest.
-- **Unlimited fuel**: a move cut off by a crash in open tunnel is settled the same way when the known cells around the two possible spots differ (e.g. it had just moved into fresh rock); walking back through its own tunnel it still asks for help.
-- **Still lost?** `NEEDS_HELP` "facing unknown" / "position unknown": carry it home, face it the setup way, press `H` twice. With `SURFACE_IF_LOST` on (off by default) a turtle whose position is lost digs straight up instead (never chests, computers or other protected blocks) until it has passed 8 open cells, hits something unbreakable or protected, or its fuel would drop below 50, and waits there with "lost: surfaced here, carry me home and press H twice". It never does this from home, its shaft column or above home. A GPS turtle tries GPS every 16 blocks on the way up and, once it gets a fix, goes home by itself.
-- **Speed**: without a modem nothing waits for the network: no status messages are built, `home_get`, GPS and the update check return at once.
+---
 
-GPS turtles underground: wireless modems reach only 64 blocks (more above Y 96), so at mining depth a GPS turtle usually has no fix. It then recovers exactly like a blind turtle, and after a failed `gps.locate` it doesn't try again (2 s each) until it has climbed 16 blocks or is near home.
+## Networking
 
-## Configuration
+Everything here is automatic. Each device works out which modem it has, who it can reach and how many hops away the server is, and keeps re-checking. Full details: `docs/COMMS.md`.
 
-Settings live in the turtle's settings file under `tminer.<KEY>`. Change them with `install`, `set tminer.<KEY> <value>` on the turtle, or the monitor's SET... button (keys marked **remote**; the turtle applies them at once and acks or refuses). Restart the miner after a local `set`.
+### Modem range (CC:Tweaked rules)
+| Modem | Range |
+|-------|-------|
+| None | Turtle works alone; keys on its screen |
+| Wireless (basic) | 64 blocks at or below Y 96, rising to 384 at build height. Straight-line distance, walls don't matter. A message arrives if **either** end is in range |
+| Ender | The whole dimension (and other dimensions). If **either** end has one, the message arrives |
+| Wired | Only along the cable network |
+
+What that means: with a home around Y 70 and mining at Y -58, a turtle with a basic modem loses contact about 60 blocks down the shaft. Putting the server higher doesn't fix it (it's straight-line distance).
+
+### Out of range is normal
+- Before leaving home a turtle sends `away` with an ETA. The monitor shows `AWAY back by ~hh:mm` and only alerts (`OVERDUE`, shown as `LATE!`) if it's 50% + 2 minutes overdue, or reports a problem.
+- Commands sent while it's away are **queued** on the server and delivered the moment it's heard again (kept 24 h; a newer command of the same kind replaces an older one).
+- Events it saw while away (veins, problems) come back as one **catch-up log**, filed under the time they happened.
+- Out of contact it doesn't waste time sending status; the newest status goes out as soon as it's back.
+
+### Mesh: every computer is a bridge
+- Every computer running TurtleMiner (server, monitor, relay) passes `TMINER` messages between **all** its modems: wired, wireless and ender. Duplicates are dropped and there's a hop limit, so there are no loops.
+- So a wired-only computer deep in your base reaches the turtles through any computer that also has a wireless modem, and two wired networks joined by one wireless computer act as one network.
+- Turtles relay for each other too: a turtle with an ender modem always relays; one with a basic modem relays only when that brings a message closer to its destination (in the simulator, 10 basic turtles used about 2 transmissions per message instead of about 12).
+- `relay` program: put a spare computer with a basic modem at the shaft bottom for contact 64 blocks around it, or one with an ender modem anywhere for contact everywhere.
+
+### What to expect
+| You have | You get |
+|----------|---------|
+| No modems | Turtles mine; you use their keys. No monitor |
+| Basic modems | Contact near home; `AWAY`, queued commands and catch-up logs cover the rest |
+| Basic + a relay at the shaft bottom | Contact 64 blocks around the relay too |
+| One ender modem anywhere (server, relay or a turtle) | Every turtle with any modem in contact everywhere |
+| Wired + wireless computers | One network; wired-only computers fully take part |
+
+---
+
+## GPS
+
+GPS is optional and used whenever it's available "here, now". Turtles never depend on it.
+
+### How CC's GPS works
+- A GPS host is a computer with a **wireless or ender modem** that knows its own exact coordinates and runs `gps host`. Wired modems can't do it (they don't measure distance).
+- A turtle asks; each host in range replies, and the game tells the turtle how far away each reply came from. From the distances it works out its position.
+- You need **at least 4 hosts**, not all at the same height and not in a line. With 3 there are two possible answers and `gps.locate` gives up.
+- Range is the modem range above. Hosts with **basic** modems on a surface tower don't reach Y -58; hosts with **ender** modems reach everywhere.
+
+### What turtles do with it
+- At boot, at home, after a crash and while surfacing, a turtle tries for a fix. With one it uses world coordinates and checks its position; without one it carries on from its journal.
+- After a failed attempt it doesn't try again (each try waits 2 s) until it has climbed 16 blocks or is back near home.
+- A turtle that had GPS at the surface and none at depth recovers from crashes exactly like a blind turtle.
+
+### Setting up hosts today
+Use 4 computers, each with its own wireless (or ender) modem, spread out and at different heights. On each, type its block's coordinates from F3:
+```
+gps host <x> <y> <z>
+```
+(Put that line in its `startup.lua` to survive reboots.) Test with `gps locate` on a pocket computer.
+
+### GPS offer *(coming)*
+The server cluster will do this for you. When it sees at least 4 computers with wireless/ender modems laid out well enough for GPS, it offers `GPS possible with 4 PCs: [Set up] [Later] [Never]` on the monitor and on each of those computers. One "Set up" configures all of them. It measures their positions itself from modem distances (silently, if any computer already gets a GPS fix or GPS turtles pass nearby), and only falls back to asking for F3 coordinates, on that computer's own screen, for as few computers as needed, checking each entry against the measured distances to catch typos. Hosts re-check each other every 10 minutes; one that has moved or breaks stops hosting rather than give wrong positions. If there aren't enough suitable computers it stays quiet. Plan: `docs/CLUSTER_GPS_PLAN.md`.
+
+---
+
+## Clustering *(coming)*
+
+Today: run `setup server` on one computer, and `monitor`/`relay` on others. They already share traffic through the mesh, but each monitor keeps its own records.
+
+Coming (being built now; `docs/CLUSTER_GPS_PLAN.md`):
+- **One program on every server computer**, `tminer_server`. Each computer works out its own jobs from what's attached: monitor UI, radio gateway (wireless/ender modem), cluster link (wired modem), update server (`/files/`), GPS host.
+- **One cluster**: the computers find each other over any mix of wired and wireless links. The lowest ID is the leader and holds the records (homes, queued commands, away times, event log); the others keep copies every 5 s. If the leader is gone for 15 s the next one takes over with its copy; the old one rejoins as a copy.
+- Commands from any screen go to the leader, so turtles always see one consistent server.
+- Example: 3 computers, one with a wireless modem and all three on a wired cable: the wireless one talks to the turtles, the other two take part through it.
+
+---
+
+## Updates
+
+- The **update server** (part of `setup server`) serves the files in `/files/` to turtles. Each file's first line is `-- Version: x.y.z`; a turtle installs a file only if the server's version is higher, after checking it loads. If any file fails, nothing is replaced. The old file stays as `<name>.bak`.
+- Turtles update **only at home**: at boot, or after `UPDATE` (next time they're home, then they carry on). They reboot at most once per update.
+- **GitHub auto-pull**: the update server checks GitHub at boot and every 60 minutes and copies in any newer file that compiles, including its own programs (then it reboots once). Settings on the server computer:
+  - `set tminer.pull_minutes 0`: only at boot
+  - `set tminer.auto_pull false`: off
+  - `set tminer.repo_base <raw URL ending in />`: another branch, e.g. `main` after merging
+- Pocket computers and extra monitors don't auto-pull: re-run their `setup` line.
+- Check what a turtle would get: `updater --check` on the turtle.
+
+---
+
+## Settings
+
+Turtle settings live under `tminer.<KEY>`. Change them with `install`, `set tminer.<KEY> <value>` on the turtle (then reboot), or SET... on the monitor (applied at once; the turtle accepts or refuses).
 
 | Key | Default | Remote | Meaning |
 |-----|---------|--------|---------|
 | `TARGET_Y` | -58 | yes | Mining level (world Y) |
-| `HOME_Y` | -9999 (unset) | yes | World Y of the home spot. Only needed without GPS; `install` asks for it. A no-GPS turtle accepts it only while at home |
-| `BRANCH_LENGTH` | 32 | yes | Branch length, each side |
+| `HOME_Y` | unset | yes | World Y of the home spot, needed only without GPS (`install` asks). Accepted only while the turtle is at home |
+| `BRANCH_LENGTH` | 32 | yes | Branch length each side |
 | `BRANCH_SPACING` | 3 | yes | Distance between branches (3 = full coverage) |
-| `MAIN_LENGTH` | 64 | yes | Length of each corridor's main tunnel |
-| `MAX_CORRIDORS` | 8 | yes | Stop with `DONE` after this many corridors |
-| `FOCUS` | `all` | yes | `all` or one ore family (`diamond`, `iron`, `ancient_debris`, ...) |
+| `MAIN_LENGTH` | 64 | yes | Corridor length |
+| `MAX_CORRIDORS` | 8 | yes | Stop with `DONE` after this many |
+| `FOCUS` | `all` | yes | `all` or one ore family: `diamond`, `iron`, `ancient_debris`, … |
 | `VEIN_MINING` | true | yes | Follow ore veins |
 | `VEIN_MAX` | 64 | yes | Max blocks per vein |
-| `ORES` | (list) | no | Block names counted as ore (`deepslate_` variants included; also `raw_iron/copper/gold_block` from 1.18 large veins, same family as the ore, e.g. `iron`) |
-| `TRASH` | (list) | no | Items dropped in the tunnel when nearly full: cobblestone, cobbled deepslate, dirt, gravel, sand, flint, tuff, granite, diorite, andesite, calcite, smooth basalt, basalt, blackstone, netherrack, moss, amethyst block/shard, dripstone |
-| `DROP_TRASH` | true | yes | Drop `TRASH` items instead of carrying them home |
-| `FUEL_MARGIN` | 200 | yes | Spare fuel kept on top of the distance home |
-| `FUEL_KEEP` | 16 | yes | Fuel items kept in reserve, never unloaded |
-| `FUEL_TARGET` | 5000 | yes | Refuel up to this at home if there is a fuel chest |
-| `BURN_COAL` | true | yes | Burn mined coal when fuel is below `FUEL_TARGET` |
-| `STATUS_INTERVAL` | 10 | yes | Seconds between status messages |
-| `SNAPSHOT_EVERY` | 100 | no | Moves between full state snapshots |
-| `STUCK_TIMEOUT` | 60 | no | Seconds without progress before a move gives up |
-| `HELP_RETRY` | 30 | no | Seconds between automatic retries while `NEEDS_HELP` ("stuck" retries wait 4x this) |
+| `DROP_TRASH` | true | yes | Drop junk in the tunnel instead of carrying it home |
+| `FUEL_MARGIN` | 200 | yes | Spare fuel on top of the route home |
+| `FUEL_KEEP` | 16 | yes | Fuel items always kept (burned only when stranded) |
+| `FUEL_TARGET` | 5000 | yes | Refuel to this at home |
+| `BURN_COAL` | true | yes | Burn mined coal below `FUEL_TARGET` |
+| `STATUS_INTERVAL` | 10 | yes | Seconds between status messages (in contact) |
 | `AUTO_UPDATE` | true | yes | Check for updates at boot when at home |
-| `SURFACE_IF_LOST` | false | yes | Position lost after a crash: dig straight up to the surface and wait there (see "Blind turtles") |
-| `RELAY` | `auto` | no | Relay other turtles' messages: `auto` (ender modem: always; basic: when it moves a message closer), `on`, `off` |
-| `MODEM` | `auto` | no | Own modem kind, normally detected: `basic` or `ender` overrides (also read by `relay` and the monitor) |
+| `SURFACE_IF_LOST` | false | yes | Lost position: dig up to the surface and wait |
+| `SNAPSHOT_EVERY` | 100 | no | Moves between full state saves (the journal covers the rest) |
+| `STUCK_TIMEOUT` | 60 | no | Seconds without progress before a move gives up |
+| `HELP_RETRY` | 30 | no | Seconds between automatic retries in `NEEDS_HELP` |
+| `RELAY` | `auto` | no | Relay others' messages: `auto`, `on`, `off` |
+| `MODEM` | `auto` | no | Own modem kind if detection is wrong: `basic`, `ender` |
+| `ORES`, `TRASH` | lists | no | Block names counted as ore / items dropped as junk (see `miner/config.lua`) |
 
-Grid settings (`BRANCH_LENGTH`, `BRANCH_SPACING`, `MAIN_LENGTH`) are frozen into the job when it starts; new values apply after `RESET_JOB`. `MAX_CORRIDORS`, `TARGET_Y` and `FOCUS` apply at once.
+`BRANCH_LENGTH`, `BRANCH_SPACING` and `MAIN_LENGTH` are fixed for a job when it starts (new values after RESET JOB). Others apply at once.
 
-## Phases
+---
+
+## Phases and help messages
 
 | Phase | Meaning |
 |-------|---------|
-| `BOOT`, `RECOVER` | Starting up, working out where it is after a restart |
-| `TO_WORK` | Walking from home to the next branch |
-| `MINING`, `VEIN` | Digging a branch / following an ore vein |
-| `RETURNING` | Going home (inventory full, fuel low, or told to) |
-| `UNLOADING`, `REFUELING` | At home, emptying into the chest / topping up fuel |
-| `IDLE` | At home, waiting (after `RETURN_HOME`); send `RESUME` |
-| `PAUSED` | Stopped where it is by `PAUSE`; stays paused in place across reboots and chunk reloads; send `RESUME` |
-| `DONE` | Mined `MAX_CORRIDORS` corridors. Raise `MAX_CORRIDORS` (SET) and send `RESUME` to mine more, or send `RESET_JOB` then `RESUME` to start the grid over |
-| `ERROR` | The program crashed; it saves, tries to go home, then `NEEDS_HELP` |
-| `NEEDS_HELP` | It can't continue on its own. The reason says why (below) |
+| `BOOT`, `RECOVER` | Starting, working out where it is |
+| `TO_WORK` | Going to its next branch |
+| `MINING`, `VEIN` | Digging / following a vein |
+| `RETURNING` | Going home (full, fuel, or told to) |
+| `UNLOADING`, `REFUELING` | At home |
+| `IDLE` | At home waiting; RESUME (or `R`) |
+| `PAUSED` | Stopped in place, also across reboots; RESUME |
+| `DONE` | Finished `MAX_CORRIDORS`. Raise it and RESUME, or RESET JOB then RESUME |
+| `AWAY` (monitor only) | Out of range on a trip; back by the time shown |
+| `ERROR` | Program crashed; it saves, tries to go home, then `NEEDS_HELP` |
+| `NEEDS_HELP` | Needs you; the reason says why |
 
-`NEEDS_HELP` reasons:
+| `NEEDS_HELP` reason | What to do |
+|---------------------|-----------|
+| storage full | Empty the home chest; it retries every 30 s |
+| no storage at home | Put a chest behind or beside home (not below, not on the modem side) |
+| no GPS: set HOME_Y | SET `HOME_Y` (at home) then RESUME, or rerun `install` |
+| stuck: unbreakable at x,y,z | Bedrock or a protected block in the way: change `TARGET_Y` or RESET JOB, then RESUME |
+| stuck: timeout … retry n/5 | Something blocked it for 60 s; it retries every 2 min, 5 times. After "gave up", clear the way and RESUME |
+| out of fuel / no_fuel | Bring fuel to it or its chest, RESUME |
+| facing unknown after crash / position unknown after crash | Carry it home, face it the setup way, press `H` twice (or RESET HOME) |
+| lost: surfaced here … | `SURFACE_IF_LOST` brought it up: carry it home, `H` twice |
+| state lost: send RESET_HOME here or carry to home | Its save files are gone. New home here: RESET HOME. Otherwise carry it to its old home (with GPS it notices by itself) |
+| ERROR text | A bug: the card shows the start of the error; please report it |
 
-| Reason | What to do |
-|--------|-----------|
-| chest full / `storage_full` | Empty the home chest. It retries every 30 s by itself |
-| no storage / `no_storage` | Put a chest behind or beside the home spot |
-| no GPS: set HOME_Y | Turtle has no GPS and doesn't know its Y. Send `SET HOME_Y <y>` then `RESUME` (or rerun `install`). `SET HOME_Y` is refused unless the turtle is at home |
-| stuck: unbreakable at x,y,z | Bedrock or a protected block in the way. Change `TARGET_Y` or send `RESET_JOB`, then `RESUME` |
-| no fuel / `no_fuel` | Bring fuel to the turtle (or to its chest at home), then `RESUME`. When stranded on the way home it also burns its `FUEL_KEEP` reserve |
-| stuck: timeout ... retry n/5 | Something kept blocking it for 60 s (mob, player, other turtle). It goes back to work by itself every 2 minutes, 5 times; after that ("gave up") clear the way and `RESUME` |
-| facing unknown after crash (probe: n facings fit) | Crashed mid-turn without a GPS fix and the four neighbours did not tell which way it faces (open cave, unknown cells). Carry it home, face it the setup way, press `H` twice or send `RESET_HOME` |
-| lost: surfaced here, carry me home and press H twice | `SURFACE_IF_LOST` climbed it to the surface. Do what it says |
-| position unknown after crash | Same: put it at home and send `RESET_HOME` |
-| state lost: send RESET_HOME here or carry to home | GPS turtle lost its state files and is far from the home the server remembers. If this spot is its new home, send `RESET_HOME`. If not, carry it to its old home: it notices and carries on |
-| state lost: place at home and send RESET_HOME | Same without GPS: put it at home, send `RESET_HOME` |
-| ERROR text | A bug. The card shows the first 200 characters of the traceback; report it |
+---
 
 ## Troubleshooting
 
-- **Turtle not on the monitor**: does it have a modem (`peripheral.find("modem")`)? Is it in range, or is an ender modem needed? A turtle silent for 60 s shows as `SILENT`.
-- **Commands go to the wrong turtle**: they can't; commands carry the turtle's ID. Check the label/ID on the card.
-- **Turtle won't update**: updates only run at boot while the turtle is at home, or after `UPDATE` the next time it is home (then it carries on with what it was doing). Run `updater --check` on the turtle to see what the server offers. The server needs the higher version number on the first line.
-- **A broken file on the server**: the turtle checks every file with `load()` before installing and keeps the old one if any file fails. The previous version stays as `<name>.bak`.
-- **Boot loop after an update**: can't happen by design: the turtle reboots at most once per update (`.tm_updated` marks it). Disable auto-updates with `set tminer.AUTO_UPDATE false`.
-- **Moved the turtle by hand / lost state**: put it on its home spot and send `RESET_HOME`. To set it up somewhere new, run `install` there and answer yes to "new home spot" (it deletes `.tm_state*` and `.tm_journal*` and makes the servers forget the old home). By hand: delete those files, delete the turtle's entry from `miner_homes.db` on every monitor server (or run `install`), and reboot.
-- **Start over**: `RESET JOB` on the monitor restarts the grid at corridor 0 next time the turtle is home; `RESUME` if it is `DONE` or `IDLE`.
-- **Paused turtle after a server restart**: it stays `PAUSED` where it was. Send `RESUME`, or `RETURN_HOME`.
+- **`setup` fails**: read the `failed:` line (folder in the way, read-only, disk full). Make sure you're running the current `setup.lua` (`wget run …`, not an old saved copy).
+- **Turtle not on the monitor**: does it have a modem? It may just be out of range (`AWAY`). Basic modems reach 64 blocks; use a relay or an ender modem for more.
+- **Monitor shows `LATE!`**: the turtle is well past its expected return. Check its screen or go and look; commands are queued meanwhile.
+- **Commands affect the wrong turtle**: they can't; each command carries the turtle's ID.
+- **Turtle doesn't update**: it updates only at home. `updater --check` shows what the server offers; the server needs a higher version on the file's first line.
+- **Moved a turtle by hand**: put it on its home spot and press `H` twice (or RESET HOME). For a new home, run `install` there and answer yes to "new home spot".
+- **Start over**: RESET JOB, then RESUME.
+- **A GPS turtle says no GPS underground**: normal with basic-modem hosts; it works blind down there.
+
+---
+
+## For developers
+
+- Layout: `miner/` (turtle: `miner.lua` main loop, `nav.lua` movement and recovery, `state.lua` journal and saves, `inv.lua` fuel and storage, `mine.lua` grid and veins, `net.lua` comms, `config.lua` settings, `install.lua`, `updater.lua`, `startup.lua`), `servers/` (monitor, update server, relay), `setup.lua`, `test/` (simulator), `docs/`.
+- Tests: `lua5.4 test/run.lua` runs every scenario in a simulated CC world (modem ranges, GPS, chunks, crashes, world rollback). `lua5.4 test/run.lua 37` runs one.
+- Design and progress: `docs/PLAN.md`, `docs/INTERFACES.md`, `docs/PROTOCOL.md`, `docs/COMMS.md`, `docs/CLUSTER_GPS_PLAN.md`, `docs/ARMY_PLAN.md`, and `docs/TRACKING.md` (what's done, open items, the in-game checklist).
+- Every file starts with `-- Version: x.y.z`; bump it when you change the file or the updater won't ship it.
+- `farmer/` is a separate older program, not covered here.
