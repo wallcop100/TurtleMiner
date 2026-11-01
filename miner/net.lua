@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.2.0
 -- TurtleMiner network layer (TMINER protocol v1, see docs/PROTOCOL.md and docs/COMMS.md).
 -- One rednet wrapper for the whole turtle. Never moves the turtle.
 -- Works offline: with no modem every send is a silent no-op.
@@ -8,6 +8,10 @@
 -- Out of contact: status sends are skipped, events are buffered (coalesced, max 50) and sent as
 -- one `catchup` message when contact returns. Relays TMINER traffic for other turtles when
 -- that helps (ender modem: always; basic modem: only when it moves the message closer).
+-- Mining network (docs/PROTOCOL.md "Signing"): every message is signed with the key in
+-- .tm_network (tmcrypto.lua); unsigned, foreign, tampered, replayed or stale messages are
+-- dropped (never relayed) and counted in net.stats.bad. No network file: nothing is sent or
+-- accepted. Duplicates are checked before the signature, so repeats cost nothing.
 
 local net = {}
 
@@ -45,19 +49,47 @@ local validator   = nil    -- optional fn(cmd, params) -> ok, err (used for the 
 
 local function now() return os.epoch("utc") end
 
+-- Signing -----------------------------------------------------------------------
+local function loadMod(name)
+    if require then
+        local ok, m = pcall(require, name)
+        if ok and type(m) == "table" then return m end
+    end
+    for _, p in ipairs({ name .. ".lua", "/" .. name .. ".lua" }) do
+        if fs and fs.exists(p) then
+            local fn = loadfile(p, nil, _ENV)
+            local ok, m = pcall(fn or error)
+            if ok and type(m) == "table" then return m end
+        end
+    end
+    return nil
+end
+local crypto = loadMod("tmcrypto")
+local signer = nil        -- nil: no network (send nothing, accept nothing)
+local netName = nil
+
+local function loadNetwork()
+    signer, netName = nil, nil
+    if not crypto then return end
+    local n = crypto.loadNetwork()
+    if n then signer, netName = crypto.signer(n), n.name end
+end
+loadNetwork()
+
 -- Fixed-size set: remembers the last n keys.
 local function newRing(n) return { n = n, set = {}, list = {}, i = 0 } end
 local function ringHas(r, k) return r.set[k] ~= nil end
-local function ringAdd(r, k)
+local function ringAdd(r, k, v)
     if r.set[k] then return end
     r.i = (r.i % r.n) + 1
     local old = r.list[r.i]
     if old ~= nil then r.set[old] = nil end
     r.list[r.i] = k
-    r.set[k] = true
+    r.set[k] = v or true
 end
 
-local seen    = newRing(DEDUPE_SIZE)  -- envelope dedupe keys
+local seen    = newRing(DEDUPE_SIZE)  -- envelope dedupe keys -> the verified `sig`
+local badSeen = newRing(64)           -- key|sig of copies that failed the check (no 2nd HMAC)
 local cmdSeen = newRing(DEDUPE_SIZE)  -- cmd ids already queued (server retries)
 
 -- Modems ---------------------------------------------------------------------
@@ -143,12 +175,13 @@ local function openModems()
 end
 
 function net.online()
-    if not rednet then return false end
+    if not rednet or not signer then return false end
     local ok, open = pcall(rednet.isOpen)
     return ok and open == true
 end
 
 function net.modemKind() return modem.kind end
+function net.network() return netName end      -- nil: not in a mining network
 
 -- Hops (distance to the server) ------------------------------------------------
 -- neigh[id] = {hop, t}: what each directly heard transmitter says its distance is. My hop is
@@ -256,7 +289,8 @@ function net.send(kind, to, body)
     msg.to = to or "server"
     msg.boot, msg.seq, msg.ts, msg.hops = bootId, seq, now(), 0
     stampHop(msg)
-    ringAdd(seen, tostring(myId) .. ":" .. tostring(bootId) .. ":" .. tostring(seq))
+    signer.sign(msg)
+    ringAdd(seen, tostring(myId) .. ":" .. tostring(bootId) .. ":" .. tostring(seq), msg.sig)
     -- Broadcast so every server (and relay) hears it; `to` says who it's for.
     local ok = pcall(rednet.broadcast, msg, PROTO)
     return ok
@@ -300,7 +334,7 @@ end
 -- moved the message as far (or an ender modem, which everyone hears) cancels ours.
 
 local pendingRelay, relayTimers = {}, {}
-net.stats = { relayed = 0, cancelled = 0 }
+net.stats = { relayed = 0, cancelled = 0, bad = 0, lastBad = nil }
 
 local function knownHop(id)
     local e = id and nodeHop[id]
@@ -426,13 +460,27 @@ end
 local function handle(msg, sender)
     if type(msg) ~= "table" or msg.v ~= 1 or type(msg.kind) ~= "string" then return end
     if type(msg.hops) == "number" and msg.hops > MAX_HOPS then return end
+    if not signer then return end
     local key = tostring(msg.from) .. ":" .. tostring(msg.boot) .. ":" .. tostring(msg.seq)
-    if ringHas(seen, key) then
-        if sender ~= nil then learn(sender, msg) end
-        maybeCancel(key, msg)
+    local known = seen.set[key]
+    if known ~= nil then
+        -- A copy of a message we already checked: only the same signature counts.
+        if known == msg.sig then
+            if sender ~= nil then learn(sender, msg) end
+            maybeCancel(key, msg)
+        end
         return
     end
-    ringAdd(seen, key)
+    local bkey = key .. "|" .. tostring(msg.sig)
+    if ringHas(badSeen, bkey) then net.stats.bad = net.stats.bad + 1; return end
+    local okS, why = signer.check(msg, now())
+    if not okS then
+        ringAdd(badSeen, bkey)
+        net.stats.bad = net.stats.bad + 1
+        net.stats.lastBad = tostring(why) .. " " .. tostring(msg.kind) .. " #" .. tostring(msg.from)
+        return
+    end
+    ringAdd(seen, key, msg.sig)
     if sender ~= nil then learn(sender, msg) end
     if msg.from == myId then return end
     local to = msg.to
@@ -487,9 +535,11 @@ end
 
 function net.init(c)
     if type(c) == "table" then cfg = c end
+    loadNetwork()
     readOverrides()
     openModems()
     if net.online() then return true end
+    if not signer then return false, "no mining network (run install --network)" end
     return false, "no modem"
 end
 

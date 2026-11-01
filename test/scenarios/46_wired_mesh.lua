@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- Scenario 46 (CM-5 mesh): every non-turtle node relays TMINER between ALL its modems.
 --   S  : wired-only server (central_monitor) on wired network w1
 --   R1 : relay PC, wired w1 + basic wireless (surface)
@@ -25,6 +25,7 @@ return {
             local c = sim.computer({ id = id, pos = pos, modems = {
                 { side = "left", kind = "wired", net = net }, { side = "top", kind = "basic" } } })
             c.fs:write("relay.lua", relaySrc)
+            H.installShared(c)
             sim.boot(c, { "relay" }, { background = true })
             return c
         end

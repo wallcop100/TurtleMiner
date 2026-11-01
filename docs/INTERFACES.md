@@ -177,8 +177,10 @@ net.modemKind() -> "none"|"basic"|"ender"|"wired"   -- detected (equipped upgrad
 net.hop() -> n|nil, via           -- distance to the server: 1 + min hop heard in the last 30 s
 net.inContact() -> bool           -- hop known (or first 30 s after boot, nothing heard yet)
 net.pendingEvents() -> n, dropped -- catch-up buffer size
-net.stats = {relayed, cancelled}
+net.stats = {relayed, cancelled, bad, lastBad}   -- bad = foreign/unsigned/tampered/stale messages dropped
+net.network() -> name|nil         -- mining network (.tm_network); nil = none: online() is false, nothing sent or accepted
 ```
+- Signing (PROTOCOL.md "Signing"): `net.send` signs every message; received messages are deduped first, then checked (tag, window, HMAC); failures are dropped, never relayed.
 - Out of contact: `status` sends skipped (sent when contact returns), `net.event` buffers (coalesced, max 50) and one `catchup` goes out on contact. Relays per PROTOCOL.md (`tminer.RELAY`).
 - miner: before leaving home (`TO_WORK` from home) sends `away` with the trip estimate; measures each trip into `st.stats`.
 
@@ -206,6 +208,21 @@ net.stats = {relayed, cancelled}
 - `updater.lua`: `updater.run(opts) -> updated(bool)`; CLI `updater [--check]`. Called from `startup.lua` before `miner` when the state file says the turtle is at home (or no state). Never rewrites `startup.lua` if present.
 - `startup.lua`: `require("updater").run(opts)` (guarded with pcall, only when at home: last D/S journal line is home, R lines ignored, trailing I line = not home; one reboot max via `.tm_updated`), then `shell.run("miner")`.
 - `install.lua`: if old state files exist, asks whether this is a new home spot (deletes them); with no local state left it sends `home_clear` so the servers forget the old home.
+- `install.lua` first joins the mining network (required; `tmjoin.ensure`); flags `--join <4 words> [--name n]`, `--create [name]`, `--disk [--wipe-disk]`, `--approve`, `--network` (change only). `updater` refuses replies not signed with the turtle's network.
+
+## Mining network modules (MU-0)
+
+```
+tmcrypto: sha256(s), sha256hex(s), hmacFn(key) -> fn(msg) (pads precomputed), hmac/hmacHex(key, msg),
+          canon(msg), signer(net) -> {tag, sign(msg), check(msg, nowMs) -> ok, why}, netTag(key),
+          deriveKey(name, words, yield), normName(s), loadNetwork(path), saveNetwork(net, path),
+          serializeNetwork(net), setBits("bit32"|"native"|"arith"), BITS, blocks (counter)
+tmwords:  LIST (1024), INDEX, parse(text) -> words | nil, err, word, suggestion, suggest(w), random(n)
+tmjoin:   ensure(opts) -> net, how ("existing"|"created"|"joined"|"disk"|"approved") | nil, err;
+          parseArgs(args), create(name), fromText(text, name), make(name, words), phrase(net),
+          findDisk(), toDisk(net), fromDisk(), wipeDisk(), requestApproval(opts)
+```
+- `.tm_network` = `{name, words, key}`; disk copy `<mount>/tm_network`. Servers (`tm_radio`): `T.loadNetwork()`, `S.network`, `S.signer`, `S.bad`, `S.badLast`, `T.joinList()`, `T.approveJoin(id)`, `T.dismissJoin(id)`, `T.netToDisk()`; UI views `net`, `netconfirm`, `netcode`.
 
 ## Simulator (WP-T)
 
@@ -229,5 +246,10 @@ sim.modemRange(y), sim.reach(a, b)          -- 64 below Y 96 .. 384 at 320; max(
 sim.gpsHosts = {{pos=, kind=}}              -- optional: fixes need 3 hosts in reach (same rule)
 sim.net.modemEvents = true                  -- also queue modem_message with the distance
 sim.every(interval, fn)                     -- host-side ticker (fake servers' fleet heartbeat)
+sim.computer/sim.turtle opts.network        -- .tm_network written at creation: default sim.defaultNetwork
+                                            -- (harness: H.NET, words "lava oak ember pick", name "sim"); false = none
+sim.drivePeripheral(c, side, mount)         -- disk drive with a floppy mounted at `mount` in c's fs
+c.inputs = {"line", ...}                    -- scripted answers for read(); c.http = fn(url) -> body enables http.get
+H.sign(msg, net), H.signer(net), H.network(name, words), H.installShared(c)   -- harness helpers
 ```
 Time is simulated (sleep advances a clock instantly). `os.epoch("utc")` follows the sim clock.

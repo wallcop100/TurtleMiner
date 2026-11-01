@@ -1,4 +1,4 @@
--- Version: 1.2.0
+-- Version: 1.3.0
 -- Headless CC:Tweaked simulator: computers, turtles, a voxel world, an
 -- in-memory rednet, and a single event scheduler on a simulated clock.
 --
@@ -175,6 +175,11 @@ local function newComputer(opts)
         local kind = opts.modemKind or "ender"
         c.peripherals[opts.modem or "back"] = sim.modemPeripheral(c, opts.modem or "back", kind ~= "wired", kind, opts.wiredNet)
     end
+    -- Mining network: every computer joins sim.defaultNetwork (set by the harness) unless
+    -- opts.network is false (none) or another network table.
+    local nw = opts.network
+    if nw == nil then nw = sim.defaultNetwork end
+    if nw and sim.serializeNetwork then c.fs:write(".tm_network", sim.serializeNetwork(nw)) end
     sim.computers[#sim.computers + 1] = c
     sim.byId[c.id] = c
     return c
@@ -234,7 +239,8 @@ function sim.turtle(w, opts)
     for s, it in pairs(opts.inventory or {}) do
         t.inv[s] = { name = it.name or it[1], count = it.count or it[2] or 1 }
     end
-    local c = newComputer({ id = opts.id, label = opts.label, kind = "turtle", gps = t.gps, strictTerm = opts.strictTerm })
+    local c = newComputer({ id = opts.id, label = opts.label, kind = "turtle", gps = t.gps, strictTerm = opts.strictTerm,
+        network = opts.network })
     c.turtle = t
     t.computer = c
     t.id = c.id
@@ -282,6 +288,20 @@ function sim.monitorPeripheral(c, side, w, h, color)
     for k, f in pairs(screen) do
         if type(f) == "function" and k:sub(1, 1) ~= "_" then p.methods[k] = f end
     end
+    return p
+end
+
+-- Disk drive with a floppy: the disk's files live in the computer's fs under `mount`.
+-- present=false: empty drive.
+function sim.drivePeripheral(c, side, mount, present)
+    local p = { types = { "drive" }, mount = mount or "disk", present = present ~= false, methods = {} }
+    function p.methods.isDiskPresent() return p.present end
+    function p.methods.hasData() return p.present end
+    function p.methods.getMountPath() return p.present and p.mount or nil end
+    function p.methods.getDiskLabel() return p.label end
+    function p.methods.setDiskLabel(l) p.label = l end
+    c.fs:mkdirs(p.mount)
+    c.peripherals[side] = p
     return p
 end
 

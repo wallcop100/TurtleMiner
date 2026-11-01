@@ -1,4 +1,4 @@
--- Version: 1.2.0
+-- Version: 1.3.0
 -- Builds the CC global environment for one boot of one sim computer:
 -- os, sleep, parallel, rednet, peripheral, gps, settings, textutils, term,
 -- window, paintutils, colors, keys, shell, require, fs, turtle, pocket, io,
@@ -77,9 +77,22 @@ end
 local function makeBit32()
     local M = 0xFFFFFFFF
     local b = {}
-    function b.band(...) local r = M; for _, v in ipairs({ ... }) do r = r & (math.floor(v) & M) end; return r end
-    function b.bor(...) local r = 0; for _, v in ipairs({ ... }) do r = r | (math.floor(v) & M) end; return r end
-    function b.bxor(...) local r = 0; for _, v in ipairs({ ... }) do r = r ~ (math.floor(v) & M) end; return r end
+    local fl = math.floor
+    -- Two-argument fast paths (what hashing code calls), varargs otherwise.
+    function b.band(x, y, ...)
+        if y ~= nil and ... == nil then return fl(x) & fl(y) & M end
+        local r = M; for _, v in ipairs({ x, y, ... }) do r = r & (fl(v) & M) end; return r
+    end
+    function b.bor(x, y, ...)
+        if y ~= nil and ... == nil then return (fl(x) | fl(y)) & M end
+        local r = 0; for _, v in ipairs({ x, y, ... }) do r = r | (fl(v) & M) end; return r
+    end
+    function b.bxor(x, y, ...)
+        if y ~= nil and ... == nil then return (fl(x) ~ fl(y)) & M end
+        local r = 0; for _, v in ipairs({ x, y, ... }) do r = r ~ (fl(v) & M) end; return r
+    end
+    function b.rrotate(v, n) v = fl(v) & M; n = n % 32; return ((v >> n) | (v << (32 - n))) & M end
+    function b.lrotate(v, n) v = fl(v) & M; n = n % 32; return ((v << n) | (v >> (32 - n))) & M end
     function b.bnot(v) return (~math.floor(v)) & M end
     function b.lshift(v, n) return (math.floor(v) << n) & M end
     function b.rshift(v, n) return (math.floor(v) & M) >> n end
@@ -346,6 +359,12 @@ function Env.build(sim, c)
         return G.print(...)
     end
     G.read = function()
+        -- Scripted input (c.inputs = {"line", ...}): one line per read(), echoed.
+        if c.inputs and #c.inputs > 0 then
+            local line = table.remove(c.inputs, 1)
+            write(line .. "\n")
+            return line
+        end
         -- A miner must never prompt. Record the call and block like a real read() would.
         c.readCalls[#c.readCalls + 1] = { time = sim.now, trace = debug.traceback("read() called", 2) }
         while true do os_.pullEvent("sim_never") end
@@ -587,6 +606,18 @@ function Env.build(sim, c)
         while true do os_.pullEventRaw() end
     end
     G.rednet = rednet
+    -- HTTP (only when the scenario gives the computer c.http = fn(url) -> body | nil)
+    if c.http then
+        G.http = {
+            get = function(url)
+                local body = c.http(url)
+                if not body then return nil, "404 Not Found" end
+                local done = false
+                return { readAll = function() if done then return nil end; done = true; return body end,
+                         close = function() end, getResponseCode = function() return 200 end }
+            end,
+        }
+    end
 
     -- gps ----------------------------------------------------------------------
     G.gps = {

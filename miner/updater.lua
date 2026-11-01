@@ -1,4 +1,4 @@
--- Version: 1.0.1
+-- Version: 1.1.0
 -- TurtleMiner updater. Talks to the update server over rednet protocol "TMINER"
 -- (update_check / update_manifest / file_get / file, see docs/PROTOCOL.md).
 --
@@ -10,6 +10,9 @@
 -- bad replies or a missing server. Every file is written to <name>.new and
 -- checked with load() before anything is replaced; the old file is kept as
 -- <name>.bak. If any file fails, nothing is replaced.
+-- Mining network: requests are signed and only manifests / files signed with this device's
+-- network key (.tm_network, tmcrypto.lua) are accepted; anything else is ignored. No network:
+-- no update ("no mining network").
 
 local M = {}
 
@@ -22,6 +25,30 @@ local BOOT = os.epoch and os.epoch("utc") or 0
 local seq = math.random(100000, 999999) * 1000
 
 M.PROTOCOL = PROTOCOL
+
+local function loadCrypto()
+    if require then
+        local ok, m = pcall(require, "tmcrypto")
+        if ok and type(m) == "table" then return m end
+    end
+    for _, p in ipairs({ "tmcrypto.lua", "/tmcrypto.lua" }) do
+        if fs and fs.exists(p) then
+            local fn = loadfile(p, nil, _ENV)
+            local ok, m = pcall(fn or error)
+            if ok and type(m) == "table" then return m end
+        end
+    end
+    return nil
+end
+
+-- Signer for this device's network, read fresh each run (the network may have changed).
+local function getSigner()
+    local C = loadCrypto()
+    local n = C and C.loadNetwork()
+    return n and C.signer(n) or nil
+end
+local signer = nil
+M.rejected = 0     -- unsigned / wrong-network replies ignored in the last run
 M.DEFAULT_TIMEOUT = 3      -- seconds to wait for the manifest
 M.FILE_TIMEOUT = 5         -- seconds to wait for each file
 M.PROTECTED = { ["startup.lua"] = true, ["startup"] = true }  -- only installed when missing
@@ -100,6 +127,7 @@ local function envelope(kind, to, body)
     msg.seq = seq
     msg.ts = os.epoch("utc")
     msg.hops = 0
+    if signer then signer.sign(msg) end
     return msg
 end
 
@@ -121,9 +149,13 @@ local function await(kind, timeout, match)
         if not ok or id == nil then return nil end
         if type(msg) == "table" and msg.v == 1 and msg.kind == kind
             and msg.to == me and type(msg.from) == "number"
-            and (type(msg.hops) ~= "number" or msg.hops <= MAX_HOPS)
-            and (match == nil or match(msg)) then
-            return msg
+            and (type(msg.hops) ~= "number" or msg.hops <= MAX_HOPS) then
+            -- Only from our own network (cheap tag test first, then the signature).
+            if not (signer and signer.check(msg, os.epoch("utc"))) then
+                M.rejected = M.rejected + 1
+            elseif match == nil or match(msg) then
+                return msg
+            end
         end
     end
 end
@@ -210,6 +242,8 @@ end
 function M.check(opts)
     opts = opts or {}
     if not rednet then return nil, "no rednet" end
+    signer = getSigner()
+    if not signer then return nil, "no mining network (run install --network)" end
     local opened, any = openModems()
     if not any then return nil, "no modem" end
     send("update_check", "server", { role = opts.role or "miner" })
@@ -217,7 +251,9 @@ function M.check(opts)
         return type(m.files) == "table"
     end)
     closeModems(opened)
-    if not man then return nil, "no update server" end
+    if not man then
+        return nil, "no update server" .. (M.rejected > 0 and (" (" .. M.rejected .. " unsigned/foreign replies ignored)") or "")
+    end
 
     local todo, seen = {}, {}
     local only = opts.files
@@ -272,6 +308,7 @@ runInner = function(opts)
     local log = opts.log or function() end
     local info = { files = {} }
 
+    M.rejected = 0
     local okc, todo, server = pcall(M.check, {
         timeout = opts.timeout, role = opts.role, files = opts.files,
     })

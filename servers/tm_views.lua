@@ -1,7 +1,9 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- TurtleMiner server UI, part 2: the turtle card, command buttons, SET pickers (number,
--- yes/no, focus ore), confirmations and the text / event log views. Drawing helpers come
--- from tm_ui.lua (T.ui); each screen registers itself in T.VIEWS.
+-- yes/no, focus ore), confirmations, the text / event log views and the mining network
+-- screen (NET: join requests to approve, show the join phrase after a confirmation, copy
+-- the network to a floppy disk). Drawing helpers come from tm_ui.lua (T.ui); each screen
+-- registers itself in T.VIEWS.
 local T = ...
 local S = T.S
 local U = T.ui
@@ -286,7 +288,89 @@ local function renderText(ui, title, lines, back)
     zone(ui, 1, 2, ui.w, ui.h, back)
 end
 
+-- Mining network screen ---------------------------------------------------------
+local function netLines(ui)
+    local L = {}
+    local n = S.network
+    if n then
+        L[#L + 1] = { "Network '" .. tostring(n.name) .. "'", colors.white }
+    else
+        L[#L + 1] = { "NO NETWORK: run `setup network`", colors.red }
+    end
+    L[#L + 1] = { "Foreign/bad msgs: " .. tostring(S.bad or 0), (S.bad or 0) > 0 and colors.orange or colors.lightGray }
+    if S.badLast then L[#L + 1] = { " last: " .. S.badLast, colors.lightGray } end
+    if ui.msg then L[#L + 1] = { ui.msg, colors.yellow } end
+    return L
+end
+
+local function renderNet(ui)
+    header(ui, "Network", nil, false)
+    local defs = {}
+    local reqs = T.joinList and T.joinList() or {}
+    for _, r in ipairs(reqs) do
+        local id = r.id
+        defs[#defs + 1] = { "OK #" .. id, colors.green, function()
+            ui.msg = T.approveJoin(id) and ("approved #" .. id) or ("#" .. id .. " gone")
+        end }
+        defs[#defs + 1] = { "NO #" .. id, colors.red, function() T.dismissJoin(id); ui.msg = "ignored #" .. id end }
+    end
+    defs[#defs + 1] = { "PHRASE", colors.purple, function() ui.view = "netconfirm" end }
+    defs[#defs + 1] = { "TO DISK", colors.blue, function()
+        local ok, err = T.netToDisk()
+        ui.msg = ok and "network copied to the disk" or tostring(err)
+    end }
+    defs[#defs + 1] = { "BACK", colors.gray, function() ui.view = "list"; ui.msg = nil end }
+    local lines = netLines(ui)
+    for _, r in ipairs(reqs) do
+        local left = math.max(0, math.floor((r.first + 120000 - T.now()) / 1000))
+        lines[#lines + 1] = { "Join? #" .. r.id .. " '" .. r.label .. "' " .. r.dev .. " " .. left .. "s", colors.yellow }
+    end
+    local top = buttonGrid(ui, defs, 3, #lines)
+    for i, l in ipairs(lines) do
+        if 1 + i >= top then break end
+        put(ui, 1, 1 + i, trunc(l[1], ui.w), l[2])
+    end
+end
+
+local function renderNetConfirm(ui)
+    header(ui, "Show phrase?", nil, false)
+    local text = "Show the 4-word join phrase? Anyone who sees it can join your network and command"
+        .. " your turtles. Make sure nobody is watching this screen."
+    for i, l in ipairs(wrap(text, ui.w)) do
+        if 1 + i > ui.h - 2 then break end
+        put(ui, 1, 1 + i, l, colors.white)
+    end
+    local half = math.max(1, math.floor((ui.w - 3) / 2))
+    button(ui, 2, ui.h, half, "YES SHOW", colors.red, function() ui.view = "netcode" end)
+    button(ui, 3 + half, ui.h, half, "NO", colors.gray, function() ui.view = "net" end)
+end
+
+local function renderNetCode(ui)
+    header(ui, "Join phrase", nil, false)
+    local n = S.network
+    local lines = {}
+    if n and type(n.words) == "table" and #n.words > 0 then
+        lines[#lines + 1] = "Network: " .. tostring(n.name)
+        for i, w in ipairs(n.words) do lines[#lines + 1] = "  " .. i .. ". " .. w end
+        lines[#lines + 1] = "Join: install --join " .. table.concat(n.words, " ")
+            .. (n.name ~= "mine" and (" --name " .. n.name) or "")
+    else
+        lines[#lines + 1] = n and "This PC joined by approval/disk without the words." or "No network."
+    end
+    local y = 2
+    for _, l in ipairs(lines) do
+        for _, p in ipairs(wrap(l, ui.w)) do
+            if y >= ui.h then break end
+            put(ui, 1, y, p, colors.yellow)
+            y = y + 1
+        end
+    end
+    local half = math.max(1, math.floor((ui.w - 3) / 2))
+    button(ui, 2, ui.h, half, "HIDE", colors.gray, function() ui.view = "net" end)
+end
+
 T.cmdDefs, T.numKey, T.numOk, T.wrap = cmdDefs, numKey, numOk, wrap
+T.VIEWS.net, T.VIEWS.netconfirm, T.VIEWS.netcode = renderNet, renderNetConfirm, renderNetCode
 T.VIEWS.detail, T.VIEWS.cmds, T.VIEWS.num, T.VIEWS.focus = renderDetail, renderCmds, renderNum, renderFocus
 T.VIEWS.keys, T.VIEWS.bool, T.VIEWS.confirm = renderKeys, renderBool, renderConfirm
 T.VIEWS.text = function(ui)

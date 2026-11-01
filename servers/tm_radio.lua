@@ -1,9 +1,13 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- TurtleMiner server, radio part: TMINER envelope, dedupe, modems, relaying (mesh across
 -- wired / wireless / ender, docs/COMMS.md), the turtle protocol (docs/PROTOCOL.md) and the
 -- `fleet` heartbeat. Loaded into the shared table T after tm_db.lua.
 -- Cluster rule: every server PC relays; only the leader acts on turtle messages (homes,
 -- commands, log), so turtles see one server however many PCs there are.
+-- Mining network (docs/PROTOCOL.md "Signing"): every message is signed with the key in
+-- .tm_network (tmcrypto.lua); unsigned / foreign / tampered / replayed / stale messages are
+-- dropped, never relayed, and counted (S.bad, list footer, a log line at most every 5 min).
+-- Only `join_req` (a new device asking to join, approved on the UI) is read unsigned.
 local T = ...
 local S = T.S
 
@@ -24,15 +28,118 @@ local ENVELOPE = { v = true, kind = true, to = true, boot = true, seq = true, ho
 local now, copy, trunc = T.now, T.copy, T.trunc
 
 -- ---------------------------------------------------------------------------
+-- Mining network
+-- ---------------------------------------------------------------------------
+local JOIN_WINDOW_MS = 120000   -- a join request waits this long for Approve
+local JOIN_MAX       = 8
+local BAD_LOG_MS     = 300000
+
+S.bad, S.badLogged, S.badLastLog = 0, 0, 0
+S.joinReqs = {}
+
+local function loadCrypto()
+    local path = T.modulePath and T.modulePath("tmcrypto")
+    if not path then return nil end
+    local fn = loadfile(path, nil, _ENV)
+    local ok, m = pcall(fn or error)
+    if ok and type(m) == "table" then return m end
+    return nil
+end
+T.crypto = loadCrypto()
+
+-- (Re)read .tm_network. No network: nothing is sent or accepted.
+function T.loadNetwork()
+    S.network, S.signer = nil, nil
+    if not T.crypto then return false end
+    local n = T.crypto.loadNetwork()
+    if n then S.network, S.signer = n, T.crypto.signer(n) end
+    return S.signer ~= nil
+end
+T.loadNetwork()
+
+local function countBad(msg, why)
+    S.bad = S.bad + 1
+    S.badLast = tostring(why) .. " " .. tostring(msg.kind) .. " from #" .. tostring(msg.from)
+    local t = now()
+    if t - S.badLastLog >= BAD_LOG_MS and S.mode == "server" and T.logLine then
+        S.badLastLog = t
+        T.logLine("network: " .. (S.bad - S.badLogged) .. " foreign/bad message(s) dropped (last: " .. S.badLast .. ")")
+        S.badLogged = S.bad
+    end
+end
+
+-- A device without a network asks to join (unsigned, never relayed). Shown on the UI for
+-- 2 minutes; nothing is sent unless someone presses Approve.
+local function onJoinReq(msg)
+    if S.mode ~= "server" or not S.signer then return end
+    if type(msg.nonce) ~= "string" or #msg.nonce > 32 then return end
+    local t = now()
+    for id, r in pairs(S.joinReqs) do if t - r.first > JOIN_WINDOW_MS then S.joinReqs[id] = nil end end
+    local r = S.joinReqs[msg.from]
+    if not r then
+        local n = 0
+        for _ in pairs(S.joinReqs) do n = n + 1 end
+        if n >= JOIN_MAX then return end
+        r = { id = msg.from, first = t }   -- shown for 2 minutes from the first request
+        S.joinReqs[msg.from] = r
+        T.logLine("network: #" .. msg.from .. " '" .. trunc(tostring(msg.label or "?"), 20) .. "' asks to join (NET to approve)")
+    end
+    r.label, r.dev, r.nonce, r.at = trunc(tostring(msg.label or "?"), 20), tostring(msg.dev or "?"), msg.nonce, t
+    T.markDirty()
+end
+
+function T.joinList()
+    local t, arr = now(), {}
+    for id, r in pairs(S.joinReqs) do
+        if t - r.first > JOIN_WINDOW_MS then S.joinReqs[id] = nil else arr[#arr + 1] = r end
+    end
+    table.sort(arr, function(a, b) return a.id < b.id end)
+    return arr
+end
+
+-- Approve: send the network to that device. Over the air in the clear (anyone listening
+-- right now learns it); the README says so and recommends the disk or typing the words.
+function T.approveJoin(id)
+    local r = S.joinReqs[id]
+    if not r or not S.network then return false end
+    S.joinReqs[id] = nil
+    local n = S.network
+    T.send("join_ok", id, { nonce = r.nonce, network = { name = n.name, words = n.words, key = n.key } })
+    T.logLine("network: approved #" .. id .. " '" .. tostring(r.label) .. "'")
+    return true
+end
+
+function T.dismissJoin(id)
+    S.joinReqs[id] = nil
+end
+
+-- Copy the network file to a floppy in a drive next to this PC.
+function T.netToDisk()
+    if not S.network then return false, "no network" end
+    for _, name in ipairs(peripheral.getNames()) do
+        if peripheral.getType(name) == "drive" then
+            local okP, present = pcall(peripheral.call, name, "isDiskPresent")
+            local okM, mount = pcall(peripheral.call, name, "getMountPath")
+            if okP and present and okM and type(mount) == "string" then
+                local ok, err = T.crypto.saveNetwork(S.network, fs.combine(mount, "tm_network"))
+                if ok then pcall(peripheral.call, name, "setDiskLabel", "TM network " .. S.network.name) end
+                return ok, err
+            end
+        end
+    end
+    return false, "no disk in a drive next to this computer"
+end
+
+-- ---------------------------------------------------------------------------
 -- Envelope, dedupe, modems
 -- ---------------------------------------------------------------------------
-local function markSeen(key)
+local function markSeen(key, sig)
     if S.seen[key] then return false end
     S.seenPos = S.seenPos % T.DEDUPE_MAX + 1
     local old = S.seenQ[S.seenPos]
     if old then S.seen[old] = nil end
     S.seenQ[S.seenPos] = key
-    S.seen[key] = true
+    S.seen[key] = sig or true
     return true
 end
 
@@ -44,7 +151,9 @@ function T.send(kind, to, body)
     -- Distance to the server (docs/COMMS.md): a server is 0; a pocket doesn't relay (no `hop`).
     if S.mode == "server" then msg.hop, msg.ohop = 0, 0 end
     msg.mk = S.modemKind
-    markSeen(msg.from .. ":" .. msg.boot .. ":" .. msg.seq)
+    if not S.signer then return msg end    -- not in a network: say nothing
+    S.signer.sign(msg)
+    markSeen(msg.from .. ":" .. msg.boot .. ":" .. msg.seq, msg.sig)
     if S.netOk then pcall(rednet.broadcast, msg, PROTO) end
     return msg
 end
@@ -257,7 +366,18 @@ function T.handleMessage(sender, msg, protocol)
         or type(msg.boot) ~= "number" or type(msg.seq) ~= "number" then return end
     local hops = tonumber(msg.hops) or 0
     if hops > MAX_HOPS or msg.from == S.myId then return end
-    if not markSeen(msg.from .. ":" .. msg.boot .. ":" .. msg.seq) then return end
+    local key = msg.from .. ":" .. msg.boot .. ":" .. msg.seq
+    if S.seen[key] then return end          -- repeat: no signature check needed
+    if msg.kind == "join_req" then
+        markSeen(key)
+        onJoinReq(msg)
+        return
+    end
+    if msg.kind == "join_ok" then return end -- for a device joining; not ours to count
+    if not S.signer then return end
+    local ok, why = S.signer.check(msg, now())
+    if not ok then countBad(msg, why); return end
+    markSeen(key, msg.sig)
     relay(msg, hops)
 
     local k = msg.kind

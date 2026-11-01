@@ -1,4 +1,4 @@
--- Version: 1.2.0
+-- Version: 1.3.0
 -- Pulls newer TurtleMiner files from GitHub into the update server's folder
 -- (and the server's own programs). Used by update_server at boot and every
 -- tminer.pull_minutes (default 60, 0 = boot only).
@@ -16,13 +16,17 @@ local M = {}
 M.DEFAULT_BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss/"
 
 M.MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "net.lua",
-            "miner.lua", "updater.lua", "install.lua", "startup.lua" }
+            "miner.lua", "updater.lua", "install.lua", "startup.lua",
+            "tmcrypto.lua", "tmwords.lua", "tmjoin.lua" }
 
 -- Server programs: repo path -> local path. Only replaced if already present (so a
 -- monitor-less update server doesn't suddenly get a monitor). The third field lists files
 -- that need this one: it is installed when any of them is present (tminer_server and its
 -- modules come with the central_monitor launcher that now runs them).
 local NEEDS_SERVER = { "central_monitor.lua", "tminer_server.lua", "tminer_startup.lua", "monitor_startup.lua" }
+-- Mining network modules (signing, join): every computer running our programs needs them.
+local NEEDS_NET = { "central_monitor.lua", "tminer_server.lua", "tminer_startup.lua", "monitor_startup.lua",
+    "relay.lua", "update_server.lua" }
 M.SERVER = {
     { "servers/tm_db.lua", "tm_db.lua", NEEDS_SERVER },
     { "servers/tm_radio.lua", "tm_radio.lua", NEEDS_SERVER },
@@ -37,6 +41,9 @@ M.SERVER = {
     { "servers/startup.lua", "monitor_startup.lua" },
     { "servers/startup.lua", "tminer_startup.lua" },
     { "servers/relay.lua", "relay.lua" },
+    { "miner/tmcrypto.lua", "tmcrypto.lua", NEEDS_NET },
+    { "miner/tmwords.lua", "tmwords.lua", NEEDS_NET },
+    { "miner/tmjoin.lua", "tmjoin.lua", NEEDS_NET },
 }
 
 local function wanted(p)

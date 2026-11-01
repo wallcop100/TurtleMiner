@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- Scenario 32 (review #12): UPDATE while mining runs at the next home visit and the
 -- turtle then carries on with what it was doing (never parks IDLE "update pending").
 --  A: no update server answers: back to work after the home visit.
@@ -11,7 +11,7 @@ local function updateServer(sim, H, id, files)
         local m = { v = 1, kind = kind, from = id, to = to, boot = sim.BASE_EPOCH, seq = seq,
             ts = math.floor(sim.BASE_EPOCH + sim.now * 1000), hops = 0 }
         for k, v in pairs(body) do m[k] = v end
-        sim.net.inject(id, nil, m, "TMINER")
+        sim.net.inject(id, nil, H.sign(m), "TMINER")
     end
     local srv = { checks = 0, gets = 0 }
     sim.net.addNode(id, function(from, msg, protocol)

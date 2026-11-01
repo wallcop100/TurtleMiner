@@ -1,4 +1,4 @@
--- Version: 1.4.1
+-- Version: 1.4.2
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
@@ -1075,7 +1075,7 @@ end
 net.init(cfg)
 net.setValidator(validateCmd)
 -- Keyboard controls on the turtle itself, so it can be run with no monitor or modem.
-local KEYHELP = "Keys: R resume  P pause  B return home  S status  H twice = this is home"
+local KEYHELP = "Keys: R resume  P pause  B return home  S status  H twice = this is home  N network to disk"
 local function keyboard()
     local lastH = 0
     while true do
@@ -1097,6 +1097,14 @@ local function keyboard()
                 lastH = now
                 print("> press H again within 5 s to make this spot home")
             end
+        elseif ch == "n" then
+            -- Copy this turtle's mining network to a floppy in a drive next to it (join without typing).
+            local okJ, J = pcall(require, "tmjoin")
+            if not okJ then print("> tmjoin.lua missing")
+            else
+                local okD, err = J.toDisk()
+                print(okD and "> network copied to the disk" or ("> " .. tostring(err)))
+            end
         elseif ch == "?" then print(KEYHELP)
         end
     end
@@ -1105,4 +1113,5 @@ end
 setupScreen()
 drawStatus()
 print(KEYHELP)
+if not net.network() then print("No mining network: works offline. Run 'install --network' to join one.") end
 parallel.waitForAny(worker, function() net.run(getStatus) end, keyboard, screenLoop)

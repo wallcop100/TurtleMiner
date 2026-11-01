@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- TurtleMiner relay (docs/COMMS.md rule 5). Run on any plain computer: opens every modem
 -- (ender, basic wireless, wired) and relays TMINER traffic between them, with dedupe and a
 -- hop limit. Nothing to configure:
@@ -6,6 +6,9 @@
 --   * with a basic modem: covers 64 blocks around it (e.g. at the shaft bottom)
 --   * with a wired modem too: bridges a wired network (e.g. a server in a base) to the air
 -- Setting tminer.MODEM ("ender"/"basic") only overrides what it detects.
+-- Mining network: relays only messages signed with this computer's network (.tm_network,
+-- tmcrypto.lua next to it; `setup network` makes one). Everything else is dropped and counted.
+-- The relayed copy is the original signed message; only hops/hop/via/mk change.
 -- Usage: relay
 
 local PROTO       = "TMINER"
@@ -25,13 +28,26 @@ local R = {
 
 local function now() return os.epoch("utc") end
 
-local function markSeen(key)
+local crypto, signer, netName
+do
+    local ok, m = pcall(require, "tmcrypto")
+    if not ok or type(m) ~= "table" then
+        local fn = loadfile("tmcrypto.lua", nil, _ENV) or loadfile("/tmcrypto.lua", nil, _ENV)
+        ok, m = pcall(fn or error)
+    end
+    if ok and type(m) == "table" then crypto = m end
+    local n = crypto and crypto.loadNetwork()
+    if n then signer, netName = crypto.signer(n), n.name end
+end
+R.bad = 0
+
+local function markSeen(key, sig)
     if R.seen[key] then return false end
     R.seenPos = R.seenPos % DEDUPE_MAX + 1
     local old = R.seenQ[R.seenPos]
     if old then R.seen[old] = nil end
     R.seenQ[R.seenPos] = key
-    R.seen[key] = true
+    R.seen[key] = sig or true
     return true
 end
 
@@ -78,9 +94,22 @@ local function handle(sender, msg)
     if type(msg) ~= "table" or msg.v ~= 1 or type(msg.kind) ~= "string" then return end
     if type(msg.from) ~= "number" or msg.from == myId then return end
     local hops = tonumber(msg.hops) or 0
-    if hops > MAX_HOPS then return end
+    if hops > MAX_HOPS or not signer then return end
+    local key = msg.from .. ":" .. tostring(msg.boot) .. ":" .. tostring(msg.seq)
+    local known = R.seen[key]
+    if known ~= nil then
+        -- A copy of a message already checked: the same signature still tells us a distance.
+        if known == msg.sig then learn(sender, msg) end
+        return
+    end
+    local ok, why = signer.check(msg, now())
+    if not ok then
+        R.bad = R.bad + 1
+        R.lastBad = tostring(why) .. " #" .. tostring(msg.from)
+        return
+    end
     learn(sender, msg)
-    if not markSeen(msg.from .. ":" .. tostring(msg.boot) .. ":" .. tostring(msg.seq)) then return end
+    markSeen(key, msg.sig)
     R.heard = R.heard + 1
     R.last = msg.kind .. " #" .. msg.from
     -- Sent by an ender modem: every wireless modem heard it; only a wired side still needs it.
@@ -109,6 +138,8 @@ local function draw()
                 or "no server heard (30 s)",
             "heard " .. R.heard .. "  relayed " .. R.relayed,
             "last " .. R.last,
+            signer and ("network '" .. netName .. "'  foreign/bad msgs: " .. R.bad)
+                or "NO NETWORK: run `setup network`",
         }
         if R.wireless + R.wired == 0 then lines[2] = "NO MODEM: attach one" end
         for i, l in ipairs(lines) do

@@ -18,8 +18,37 @@ All traffic uses rednet protocol string `"TMINER"`. No other protocols. Messages
 | `ohop` | number or nil | The origin's own distance to the server (never changed by relays). Used to relay towards a turtle |
 | `via` | number or nil | Neighbour the transmitter's `hop` came from (split horizon: a node ignores adverts whose `via` is itself) |
 | `mk` | string | Transmitter's modem kind: `"none"`, `"basic"`, `"ender"`, `"wired"` (relays overwrite it) |
+| `net` | string | Network tag: first 8 hex chars of SHA-256(`"tmnet|" .. key`). Lets receivers drop other players' traffic without computing an HMAC |
+| `sig` | string | Signature: first 32 hex chars (128 bits) of HMAC-SHA256(key, canonical form of the message). See "Signing" |
 
 Dedupe key: `from .. ":" .. boot .. ":" .. seq`. Receivers keep the last 256 keys and ignore repeats. Senders without `hop` that send server-only kinds (`fleet`, `cmd`, `home`, `update_manifest`, `file`) count as hop 0 (older servers).
+
+## Signing (mining network)
+
+Every device has `.tm_network` = `{name, words, key}` (docs/MESH_UPDATE_PLAN.md section 1). `key` is 64 hex chars derived from the 4-word join phrase and the network name: `h = SHA-256("tminer-net-v1|" .. name .. "|" .. "w1 w2 w3 w4")`, then 1024 times `h = SHA-256(h .. "tminer-net-v1|" .. name .. "|")`, hex. Words come from `miner/tmwords.lua` (1024 words, no two one edit apart); the name is lowercase `[a-z0-9_-]`, max 16, default `mine`. Implementation: `miner/tmcrypto.lua` (pure Lua, `bit32` in CC).
+
+**Canonical form** (what is signed): the message table without the top-level fields relays change (`sig`, `hops`, `hop`, `via`, `mk`), serialized as:
+- string: `s<byte length>:<bytes>`; number: `n<integer>;` when it is a whole number below 2^53, else `n<%.17g>;` (`nnan;`, `ninf;`, `n-inf;`); `true` = `T`, `false` = `F`
+- table: `{` then each key and value (keys encoded the same way, sorted by their encoding as byte strings) then `}`; keys other than strings/numbers/booleans and values of other types (functions) are left out; nesting deeper than 32 is cut off as `?`
+
+**Sending:** build the message, set `net` = tag, then `sig` = HMAC(key, canonical form) (first 32 hex). Relays forward the original message; they change only `hops`, `hop`, `via`, `mk` and never re-sign.
+
+**Receiving**, in this order (cheap tests first):
+1. Envelope sanity (`v`, `kind`, `from`, `boot`, `seq`, `hops`).
+2. Dedupe: a key already accepted is ignored (no HMAC). A repeat counts as a copy (for hop learning and relay cancelling) only if its `sig` equals the accepted one.
+3. `net` must be our tag (else "foreign"), `sig` a string (else "unsigned").
+4. Timestamp window: `ts` more than 10 minutes in the future, or more than 10 minutes old, is rejected ("future" / "old"). Exception: `catchup` may be old (its events carry their own signed `ts`; the server dedupes them by `eid`).
+5. HMAC compare ("bad sig").
+Rejected messages are never processed or relayed and are counted (turtle `net.stats.bad`, server `S.bad` shown as `bad:n` in the list footer and logged at most every 5 minutes, relay screen). A device without `.tm_network` sends nothing and accepts nothing (works offline).
+
+Replays: within 10 minutes the dedupe ring catches a repeat of the same message; a repeat with a changed `seq` fails the HMAC; older copies fail the window. Routing hints (`hop`, `via`, `mk`, `hops`) are not signed: a replayed genuine copy with altered hints can only affect relay choices, never content.
+
+**Join messages** (the only unsigned exception):
+
+| kind | direction | fields | rules |
+|------|-----------|--------|-------|
+| `join_req` | new device (no network) → `"server"` | `label`, `dev` (`turtle`/`pocket`/`computer`), `nonce` (16 hex) | every 5 s for 2 minutes. Servers list it on the NET screen for 2 minutes from the first request (max 8). Not relayed, not counted as bad |
+| `join_ok` | server PC whose UI pressed Approve → requester | `nonce`, `network = {name, words, key}` | signed with the network key (so it is relayed like any message); the device accepts it only with its own nonce and a signature that checks with the key inside. The key travels in the clear |
 
 ## Contact
 
@@ -148,6 +177,8 @@ Rules:
 | `update_manifest` | update server → turtle | `files`: array of `{name, version}` |
 | `file_get` | turtle → update server | `name` |
 | `file` | update server → turtle | `name, version, content` |
+
+All four are signed like every message; the turtle's updater (and `install`'s bootstrap fetch) ignores manifests and files that don't check with its own key.
 
 Versions are read from the first line of each file: `-- Version: x.y.z`.
 

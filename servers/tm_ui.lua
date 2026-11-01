@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- TurtleMiner server UI, part 1: drawing helpers, the turtle list and the turtle card, the
 -- render dispatch, keyboard / mouse / touch input and the UI loop. Any number of displays
 -- (monitors + the PC's own terminal, or a pocket). Keyboard first (docs/COMMS.md): arrow keys
@@ -285,9 +285,20 @@ local function renderList(ui)
     else
         info = (S.netOk and S.modemKind or "NO MODEM") .. (T.clusterText and (" " .. T.clusterText()) or "")
     end
+    -- Mining network: missing network, join requests waiting, foreign/bad messages dropped.
+    local joins = T.joinList and #T.joinList() or 0
+    if not S.signer then info = "NO NETWORK " .. info end
+    if joins > 0 then info = "JOIN? " .. info end
+    if (S.bad or 0) > 0 then info = info .. " bad:" .. S.bad end
     if pages > 1 then info = ui.page .. "/" .. pages .. " " .. info end
     local logW = (w - x + 1 >= 10) and 5 or 0
-    put(ui, x, h, trunc(info, w - x + 1 - (logW > 0 and logW + 1 or 0)), colors.white, colors.gray)
+    local netW = (w - x + 1 >= 16) and 5 or 0
+    local used = (logW > 0 and logW + 1 or 0) + (netW > 0 and netW + 1 or 0)
+    put(ui, x, h, trunc(info, w - x + 1 - used), colors.white, colors.gray)
+    if netW > 0 then
+        button(ui, w - logW - netW, h, netW, "NET", joins > 0 and colors.orange or colors.blue,
+            function() ui.view = "net"; ui.msg = nil end)
+    end
     if logW > 0 then button(ui, w - logW + 1, h, logW, "LOG", colors.blue, function() ui.view = "log" end) end
 end
 
@@ -377,7 +388,9 @@ end
 -- One step back (Backspace): the card from its sub-screens, the list from the card / log.
 function T.back(ui)
     if ui.view == "list" then return false end
-    if ui.view == "detail" or ui.view == "log" then ui.view = "list" else ui.view = "detail" end
+    if ui.view == "detail" or ui.view == "log" or ui.view == "net" then ui.view = "list"
+    elseif ui.view == "netconfirm" or ui.view == "netcode" then ui.view = "net"
+    else ui.view = "detail" end
     ui.msg = nil
     return true
 end

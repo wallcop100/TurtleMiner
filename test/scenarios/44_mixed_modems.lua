@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- Scenario 44 (CM-5): mixed modems, all detected at runtime (no settings anywhere).
 --  A: basic-modem server at the surface + one ender-modem relay computer (servers/relay.lua)
 --     far away: basic-modem turtles at depth, out of the server's range, are in contact
@@ -72,6 +72,7 @@ return {
         srv = H.monitorComputer({ pos = { x = 0, y = 42, z = 3 }, modemKind = "basic" })
         local relay = sim.computer({ id = 200, pos = { x = 500, y = 100, z = -800 }, modemKind = "ender" })
         relay.fs:write("relay.lua", relaySrc)
+        H.installShared(relay)
         sim.boot(relay, { "relay" }, { background = true })
         ts = turtles(sim, H, w, 1)
         for _, t in ipairs(ts) do

@@ -57,7 +57,7 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 
 | WP | Status | Notes |
 |----|--------|-------|
-| MU-0 Mining network join + signed messages | TODO | Closes today's multiplayer hole (anyone can command turtles / pose as update server). First after cluster |
+| MU-0 Mining network join + signed messages | DONE | tmcrypto (SHA-256/HMAC, bit32 / native / arithmetic), tmwords (1024 words), tmjoin (create, type 4 words, disk, approve). Every TMINER message signed; dedupe before HMAC; 10 min window (catchup exempt); servers/relays/turtles/updater/update_server check. UI NET screen. Scenarios 52-55 |
 | MU-1 Mesh updates (summaries, signed releases, chunked transfer, manual-edit detection) | TODO | |
 | MU-2 Probation + rollback + bad marks | TODO | |
 | MU-3 Check now button + updater --pull | TODO | |
@@ -156,6 +156,10 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 48 | Leader switched off: replica takes over (15.3 s), queued cmds + homes kept, outage cmd delivered once, old leader rejoins as replica | DONE | PASS |
 | 49 | Keyboard-only UI on a basic PC + basic monitor: every screen, bounds + greyscale checked | DONE | PASS |
 | 50 | Two wired networks bridged by one wireless PC: split leaders merge into one, queued cmd handed over | DONE | PASS |
+| 52 | SHA-256 / HMAC test vectors (bit32 in sim, arithmetic fallback), canonical form, tamper detection, cost, word list | DONE | PASS |
+| 53 | Two players' networks on the same airwaves: own turtles only, foreign commands ignored, relays don't cross | DONE | PASS |
+| 54 | Forged / tampered / replayed / stale messages; old catch-up accepted; forged and tampered updates refused | DONE | PASS |
+| 55 | Join flow: install --create / --join (typo refused with suggestion), interactive, setup over HTTP, disk join, approve on monitor | DONE | PASS |
 
 ## In-game acceptance (you)
 
@@ -216,3 +220,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-01 | cluster agent | CG-0..CG-2: tminer_server (one program, roles detected), central_monitor split into tm_db/tm_radio/tm_cluster/tm_ui/tm_views/tm_update (launcher kept), cluster leader/replica/failover over any modem mix, keyboard-driven basic monitors, setup + github_pull updated. Scenarios 47-50. Suite 51/51. GPS hook: optional tm_gps.lua setting T.gps = {wanted(), loop()}. |
 | 2026-11-01 | coordinator | Cluster merged (f1aed0f); setup.lua conflict resolved (keeps safe writes). README updated for tminer_server. |
 | 2026-11-01 | coordinator | Join code changed per user: 4-word phrase (1024-word list, ~40 bits, slowed key derivation), plus no-typing joins: floppy disk, approve on monitor. Sent to MU-0 agent. |
+| 2026-11-01 | MU-0 agent | MU-0 done: tmcrypto/tmwords/tmjoin, every message signed (128-bit HMAC tag, canonical sorted-key form, `net` tag pre-filter), replay window, join by words/disk/approve, NET screen, sim default network. Status message = 9 SHA blocks (~1.4 ms on the sim host); key derivation 1024 rounds (~0.15 s sim host). Scenarios 52-55. |

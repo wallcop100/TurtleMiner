@@ -67,6 +67,11 @@ local function monitorEnv(sim)
         files[n] = f:read("a")
         f:close()
     end
+    -- Mining network: signing module + the shared test network.
+    local cf = assert(io.open(sim.REPO .. "/miner/tmcrypto.lua", "rb"))
+    files["tmcrypto.lua"] = cf:read("a")
+    cf:close()
+    files[".tm_network"] = sim.serializeNetwork(sim.defaultNetwork)
     local env
     local function loadfileX(p, mode, e)
         if not files[p] then return nil, "File not found" end
@@ -127,10 +132,16 @@ local function monitorCases(sim, H)
     f:close()
     local env, files = monitorEnv(sim)
     local M = assert(load(src, "=central_monitor", "t", env))("--lib")
+    -- Messages handed in directly are signed like a turtle would (clock of this fake env).
+    local handle = M.handleMessage
+    local MM = setmetatable({ handleMessage = function(id, msg, p)
+        msg.ts = 1700000000000
+        return handle(id, H.sign(msg), p)
+    end }, { __index = M })
     H.check(type(M) == "table" and M.SET_KEYS, "central_monitor --lib has no SET_KEYS")
     M.init({ mode = "server", noDisplay = true })
     local function status(id, label, phase)
-        M.handleMessage(id, { v = 1, kind = "status", from = id, to = "server", boot = 1, seq = id * 1000 + 1, hops = 0,
+        MM.handleMessage(id, { v = 1, kind = "status", from = id, to = "server", boot = 1, seq = id * 1000 + 1, hops = 0,
             label = label, phase = phase, reason = "a long reason text that will not fit on a pocket screen",
             pos = { x = -1234, y = -58, z = 4567 }, facing = 1, home = { x = 0, y = 64, z = 0 }, gps = true,
             fuel = 123456, fuelNeeded = 300, slotsUsed = 7, job = { corridor = 1, branch = 3, side = "L", step = 12 },
@@ -140,10 +151,10 @@ local function monitorCases(sim, H)
     status(42, "Bravo", "NEEDS_HELP")
 
     -- C: home_clear
-    M.handleMessage(42, { v = 1, kind = "home_save", from = 42, to = "server", boot = 1, seq = 5, hops = 0,
+    MM.handleMessage(42, { v = 1, kind = "home_save", from = 42, to = "server", boot = 1, seq = 5, hops = 0,
         home = { x = 1, y = 2, z = 3 }, homeFacing = 0, gps = true }, "TMINER")
     H.check(M.S.homes[42], "home_save not stored")
-    M.handleMessage(42, { v = 1, kind = "home_clear", from = 42, to = "server", boot = 1, seq = 6, hops = 0 }, "TMINER")
+    MM.handleMessage(42, { v = 1, kind = "home_clear", from = 42, to = "server", boot = 1, seq = 6, hops = 0 }, "TMINER")
     H.check(M.S.homes[42] == nil, "home_clear did not remove the record")
     H.check(not tostring(files["miner_homes.db"] or ""):find("y = 2", 1, true), "home_clear not saved to disk")
 

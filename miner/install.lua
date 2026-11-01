@@ -1,29 +1,43 @@
--- Version: 1.2.0
+-- Version: 1.3.0
 -- TurtleMiner installer. The only program that asks questions.
 --
---   install              check hardware, fetch missing files, ask 4-5 questions
---                        (plus one if old miner state is found)
---   install --default    same, but no questions (keeps current values / defaults)
+--   install              join a mining network (first time), check hardware, fetch missing
+--                        files, ask 4-5 questions (plus one if old miner state is found)
+--   install --default    same, but no questions (keeps current values / defaults); needs a
+--                        network already, or one of the network flags below
+--   install --network    only change the mining network (create / join again)
+-- Network flags (docs/MESH_UPDATE_PLAN.md section 1):
+--   --join <4 words>  [--name <network>]   join by typing the join phrase
+--   --create [name]                        create a new network (prints its 4 words)
+--   --disk [--wipe-disk]                   take the network from a floppy in a drive next to it
+--   --approve                              ask a server UI to approve (NET screen, 2 minutes)
 --
--- A fresh turtle only needs this file: missing miner files are fetched from the
--- update server (rednet protocol "TMINER").
+-- A fresh turtle only needs this file: tmcrypto/tmwords/tmjoin come from GitHub (HTTP) if
+-- missing, the other miner files from the update server (rednet protocol "TMINER", signed).
 
 -- Under `wget run`, require() would search the wget program's folder, not /.
 package.path = "/?.lua;/?;" .. package.path
 
 local args = { ... }
-local USE_DEFAULTS = false
+local USE_DEFAULTS, NETWORK_ONLY = false, false
+local NET_FILES = { "tmcrypto.lua", "tmwords.lua", "tmjoin.lua" }
+local BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss/"
+
+-- Network flags are parsed by tmjoin (loaded below); keep the rest here.
+local netArgs = {}
 for _, a in ipairs(args) do
     if a == "--default" or a == "-d" then USE_DEFAULTS = true
+    elseif a == "--network" then NETWORK_ONLY = true
     elseif a == "--help" or a == "-h" then
-        print("Usage: install [--default]")
+        print("Usage: install [--default] [--network] [--join <4 words> [--name n] | --create [name] | --disk | --approve]")
         return
-    end
+    else netArgs[#netArgs + 1] = a end
 end
 
 local REQUIRED = {
     "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua",
     "net.lua", "miner.lua", "updater.lua", "startup.lua",
+    "tmcrypto.lua", "tmwords.lua", "tmjoin.lua",
 }
 -- Files from the old miner. They are dead code now and an old startup could run them.
 local OLD_FILES = {
@@ -69,6 +83,8 @@ end
 -- Minimal client for the update sub-protocol, only used to get updater.lua
 -- itself; everything else goes through the updater.
 
+local signer = nil   -- this turtle's network signer (set once the network is known)
+
 local function fetchUpdater()
     local opened = {}
     for _, n in ipairs(peripheral.getNames()) do
@@ -82,6 +98,7 @@ local function fetchUpdater()
         seq = seq + 1
         body.v, body.kind, body.from, body.to = 1, kind, me, to
         body.boot, body.seq, body.ts, body.hops = boot, seq, os.epoch("utc"), 0
+        signer.sign(body)
         rednet.broadcast(body, "TMINER")
     end
     local function await(kind, timeout, match)
@@ -90,7 +107,7 @@ local function fetchUpdater()
             local id, m = rednet.receive("TMINER", deadline - os.clock())
             if not id then return nil end
             if type(m) == "table" and m.v == 1 and m.kind == kind and m.to == me
-                and type(m.from) == "number" and match(m) then
+                and type(m.from) == "number" and signer.check(m, os.epoch("utc")) and match(m) then
                 return m
             end
         end
@@ -128,11 +145,12 @@ local function sendToServers(kind, body)
             if rednet.isOpen(n) then opened[#opened + 1] = n end
         end
     end
-    local any = rednet.isOpen()
+    local any = rednet.isOpen() and signer ~= nil
     if any then
         local t = os.epoch("utc")
         body.v, body.kind, body.from, body.to = 1, kind, os.getComputerID(), "server"
         body.boot, body.seq, body.ts, body.hops = t, math.random(1, 99999), t, 0
+        signer.sign(body)
         pcall(rednet.broadcast, body, "TMINER")
     end
     for _, n in ipairs(opened) do pcall(rednet.close, n) end
@@ -147,9 +165,54 @@ print("TurtleMiner installer" .. (USE_DEFAULTS and " (defaults)" or ""))
 print("")
 
 if not turtle then
-    bad("this is not a turtle. On a monitor or pocket computer, run central_monitor instead.")
+    bad("this is not a turtle. On a computer or pocket computer, use setup.lua instead.")
     return
 end
+
+-- ------------------------------------------------------------ mining network
+-- Required (docs/MESH_UPDATE_PLAN.md section 1): every message is signed with its key.
+
+local function fetchHttp(name)
+    if not http then return false end
+    local okH, h = pcall(http.get, BASE .. "miner/" .. name)
+    if not okH or not h then return false end
+    local body = h.readAll()
+    h.close()
+    if not body or not load(body, "=" .. name, "t", {}) then return false end
+    local f = fs.open(name, "w")
+    f.write(body)
+    f.close()
+    return true
+end
+
+print("Mining network:")
+for _, name in ipairs(NET_FILES) do
+    if not fs.exists(name) then
+        if fetchHttp(name) then ok("fetched " .. name .. " from GitHub")
+        else
+            bad(name .. " is missing. Copy it from disk or: wget " .. BASE .. "miner/" .. name .. " " .. name)
+            return
+        end
+    end
+end
+local J = require("tmjoin")
+local jopts = J.parseArgs(netArgs)
+jopts.auto = USE_DEFAULTS
+-- An explicit network flag replaces the current network too.
+jopts.change = NETWORK_ONLY or jopts.join ~= nil or jopts.create ~= nil or jopts.disk or jopts.approve
+local network, how = J.ensure(jopts)
+if not network then
+    bad(tostring(how))
+    print("  Every device needs the network: create one here or join with its 4 words.")
+    return
+end
+if how == "existing" then ok("network '" .. network.name .. "'") else ok("network '" .. network.name .. "' (" .. how .. ")") end
+signer = J.C.signer(network)
+if NETWORK_ONLY then
+    print("Reboot to use it.")
+    return
+end
+print("")
 
 print("Hardware:")
 local modem = peripheral.find("modem", function(_, m) return m.isWireless and m.isWireless() end)
@@ -352,6 +415,9 @@ end
 -- ------------------------------------------------------------ done
 
 print("")
+if how == "created" then
+    print("New network '" .. network.name .. "', join words: " .. J.phrase(network))
+end
 print("Home spot: chest behind or beside the turtle (NOT below:")
 print("the shaft goes straight down). Optional fuel chest anywhere adjacent.")
 local hasDown, down = turtle.inspectDown()

@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- TurtleMiner server: ONE program for every server PC (docs/CLUSTER_GPS_PLAN.md section 1).
 -- Each PC works out its roles at boot and every 60 s (and when a peripheral changes):
 --   monitor attached / pocket      -> UI (keyboard first; touch and mouse are extras)
@@ -11,7 +11,9 @@
 -- The loops run side by side with `parallel` (never multishell), so a basic computer works.
 -- A pocket computer runs as a client: it shows the leader's `fleet` and sends `cmd_relay`.
 --
--- Files next to this program: tm_db, tm_radio, tm_cluster, tm_ui, tm_views, tm_update (.lua).
+-- Files next to this program: tm_db, tm_radio, tm_cluster, tm_ui, tm_views, tm_update (.lua),
+-- tmcrypto.lua (signing). Mining network: .tm_network (`setup network` creates or joins one);
+-- without it the PC sends and accepts nothing.
 -- Usage: tminer_server [monitorSide|auto|none] [textScale]      (tminer_server --lib -> API)
 
 local args = { ... }
@@ -96,12 +98,14 @@ function T.init(opts)
     S.myId = os.getComputerID()
     S.boot = T.now()
     S.cfg = { monitor = opts.monitor or "auto", scale = opts.scale or 0.5 }
+    T.loadNetwork()
     T.openModems()
     T.detectRoles()
     if S.mode == "server" then
         T.loadDb()
         T.loadLog()
-        T.logLine("server #" .. S.myId .. " started (" .. T.rolesText() .. ")" .. (S.netOk and "" or " (NO MODEM)"))
+        T.logLine("server #" .. S.myId .. " started (" .. T.rolesText() .. ")" .. (S.netOk and "" or " (NO MODEM)")
+            .. (S.signer and (" network '" .. S.network.name .. "'") or " NO NETWORK: run `setup network`"))
         T.clusterStart()
     else
         T.logLine("pocket #" .. S.myId .. " started")

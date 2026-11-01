@@ -2,9 +2,9 @@
 
 Branch mining for CC:Tweaked turtles that keeps going on its own. Turtles save their position before every move, survive server restarts and chunk unloads, burn the coal they find, and say plainly when they need help. A monitor (computer screen, monitor wall or pocket computer) shows the whole fleet and sends commands. It works with no modem at all, basic modems, ender modems, wired networks, or any mix, on basic or advanced hardware. Everything is detected automatically; settings only override.
 
-> Status: the turtle, monitor, comms, update server and server clustering are done and tested in a simulator (52 scenarios). **The GPS setup offer, mining-network security and mesh updates are being built** (sections marked *coming*). Nothing here has been signed off in a live world yet; please report what you see.
+> Status: the turtle, monitor, comms, update server, server clustering and the mining network (signed messages) are done and tested in a simulator (56 scenarios). **The GPS setup offer and mesh updates are being built** (sections marked *coming*). Nothing here has been signed off in a live world yet; please report what you see.
 
-Contents: [Quick start](#quick-start) · [What you need](#what-you-need) · [Install](#install) · [Using it](#using-it) · [Networking](#networking) · [GPS](#gps) · [Clustering](#clustering) · [Updates](#updates) · [Settings](#settings) · [Phases and help messages](#phases-and-help-messages) · [Troubleshooting](#troubleshooting) · [For developers](#for-developers)
+Contents: [Quick start](#quick-start) · [What you need](#what-you-need) · [Install](#install) · [Using it](#using-it) · [Networking](#networking) · [GPS](#gps) · [Clustering](#clustering) · [Mining network](#mining-network) · [Updates](#updates) · [Settings](#settings) · [Phases and help messages](#phases-and-help-messages) · [Troubleshooting](#troubleshooting) · [For developers](#for-developers)
 
 ---
 
@@ -17,12 +17,13 @@ All commands need CC's HTTP API (on by default). `BASE` below means `https://raw
    wget run BASE/setup.lua server
    reboot
    ```
+   Setup asks you to **create a mining network** and shows its 4-word join phrase: write it down (see [Mining network](#mining-network)).
 2. **Each turtle**, standing on its home spot with a chest behind or beside it:
    ```
    wget BASE/miner/install.lua install.lua
    install
    ```
-   Answer the questions (name, mining Y, ore, corridors, and the home Y if there's no GPS). It starts mining after a reboot.
+   Join the network first (type the 4 words, use a floppy disk, or approve it on the monitor), then answer the questions (name, mining Y, ore, corridors, and the home Y if there's no GPS). It starts mining after a reboot. `install` fetches its network files (`tmcrypto`, `tmwords`, `tmjoin`) from GitHub when they're missing.
 3. **Optional**: a pocket computer (`wget run BASE/setup.lua pocket`), extra monitor computers (`... monitor`), relay computers (`... relay`).
 
 No server at all? On the turtle: `wget run BASE/setup.lua turtle`, then `install`.
@@ -81,18 +82,20 @@ wget BASE/miner/install.lua install.lua
 install
 ```
 It:
+0. Joins the mining network (required, once): create, type the 4 words, take it from a disk, or ask the monitor to approve.
 1. Checks for a pickaxe, a modem (optional) and fuel.
 2. Fetches any missing miner files from the update server (or tells you to run `setup turtle` if there isn't one).
 3. Asks: name, mining Y (`TARGET_Y`), ore focus, corridors before stopping, and the **home Y** if it can't get a GPS fix (read it from F3; it must be the turtle's own block).
 4. If old miner state exists, asks whether this is a **new home spot**. Yes clears the old state and tells the servers to forget the old home.
 5. Writes the settings and `startup.lua`.
 
-`install --default` skips the questions.
+`install --default` skips the questions (with a network already joined, or `--join <4 words>` / `--create`). `install --network` only changes the network.
 
 ### Manual install
 Copy the files yourself (disk or `wget`), e.g. `wget BASE/miner/nav.lua nav.lua`.
 - Turtle: everything in `miner/` to the turtle's root, then `install`.
-- Server: `servers/tminer_server.lua`, `servers/tm_*.lua`, `servers/central_monitor.lua`, `servers/update_server/github_pull.lua`, `servers/startup.lua` (as `tminer_startup.lua`), and `miner/*` into `/files/`. `startup.lua` is one line: `shell.run("tminer_startup")`.
+- Server: `servers/tminer_server.lua`, `servers/tm_*.lua`, `servers/central_monitor.lua`, `servers/update_server/github_pull.lua`, `servers/startup.lua` (as `tminer_startup.lua`), `miner/tmcrypto.lua`, `miner/tmwords.lua`, `miner/tmjoin.lua` (to the root), and `miner/*` into `/files/`. `startup.lua` is one line: `shell.run("tminer_startup")`. Then copy `setup.lua` too and run `setup network` to join the network.
+- Relay: `servers/relay.lua` plus the three `miner/tm*.lua` network files.
 
 ---
 
@@ -243,9 +246,32 @@ Example: 3 computers on one cable, one with a wireless modem. All three run `tmi
 
 Older installs upgrade themselves through the GitHub pull: `central_monitor` still works (it now starts `tminer_server`), and the old `update_server` steps aside.
 
-## Mining network and mesh updates *(coming)*
+## Mining network
 
-Planned (`docs/MESH_UPDATE_PLAN.md`): every device joins a **mining network** at install (name + secret key, shared with a join code), and every message is signed, so other players can't command your turtles or push code to them. Updates then spread device to device over the mesh: pull from GitHub (hourly, at boot, or **Check now** on the monitor) or edit a file by hand on any computer, and every device updates itself (turtles at home, computers when idle, one reboot each). An update that makes a device crash is rolled back automatically and blocked across the network.
+Every device (turtles, server PCs, monitors, pockets, relays) belongs to one **mining network**. Every message is signed with the network's secret key, so other players on the same server can't command your turtles, fake their status, or answer as your update server. Several players' networks share the airwaves without seeing each other.
+
+**Joining** happens once, at install (`install` on a turtle, `setup` on a computer), and is required:
+
+- **Create** a new network on the first device. It shows a **join phrase of 4 words**, e.g. `ghast marina cairn peak`. Write them down. Optionally give the network a name (default `mine`); the name is part of the key, so other devices need it too.
+- **Join by typing** the 4 words on each other device. Case, spaces and punctuation don't matter; a mistyped word gets "did you mean ...".
+- **Join from a floppy disk** (no typing): on any network device, copy the network to a disk in a drive next to it (monitor: **NET → TO DISK**; turtle: press `N`; computer: `setup network --to-disk`). Put the disk in a drive next to the new device and run `install` / `setup`: it offers to use it, then to wipe it. Keep that disk safe; it is the key.
+- **Approve on the monitor**: choose "approve" on the new device (`install --approve`, `setup <role> --approve`). The monitor footer shows `JOIN?`; open **NET** and press **OK #id** within 2 minutes. The key then goes over the air unencrypted, so this is only safe when nobody else is listening at that moment. Prefer the disk or typing.
+
+Without questions: `install --default --join <4 words> [--name <name>]`, `install --default --create [name]`, `--disk [--wipe-disk]`, `--approve`; the same flags work for `setup <role>`.
+
+**Later:** `install --network` (turtle) or `setup network` (computer) joins another network; reboot afterwards. The monitor's **NET** screen shows the network name, the count of foreign/bad messages dropped, join requests, and (after a confirmation) the 4 words. The footer shows `bad:n` when foreign or forged messages were dropped, `NO NETWORK` when the PC has none.
+
+**What it protects:** commands, status, homes, the cluster's data and updates. A message that is unsigned, signed with another key, changed on the way, replayed, or more than 10 minutes old or in the future is dropped and never relayed. The turtle's updater only installs files from its own network's update server.
+
+**What it doesn't:** GPS (CC's GPS protocol can't be signed; a fake GPS host could still give wrong positions; turtles check fixes against their journal), and anyone who learns the 4 words, gets the disk, or is listening during an approve. The words come from a 1024-word list (about 40 bits) and the key is derived slowly, but CC has no strong random source: don't reuse a phrase you've shown in public. Messages are signed, not encrypted: others can still read them.
+
+**Upgrading an older install:** after updating to this version every device needs the network once (`setup network` on computers, `install --network` on turtles); until then it works offline and says "no mining network".
+
+Cost: signing a status message takes about 9 SHA-256 blocks (a few ms); joining derives the key once (about 1 s). Turtles without a modem do no signing at all.
+
+### Mesh updates *(coming)*
+
+Planned (`docs/MESH_UPDATE_PLAN.md`): updates spread device to device over the mesh: pull from GitHub (hourly, at boot, or **Check now** on the monitor) or edit a file by hand on any computer, and every device updates itself (turtles at home, computers when idle, one reboot each). An update that makes a device crash is rolled back automatically and blocked across the network.
 
 ---
 

@@ -1,4 +1,4 @@
--- Version: 1.2.0
+-- Version: 1.3.0
 -- Scenario helpers: pass/fail/skip plumbing, crash predicates, a fake TMINER
 -- server (virtual rednet node), truth-vs-belief watchers and the standard
 -- "turtle at home with a chest behind it" setup.
@@ -8,9 +8,43 @@ local H = {}
 local sim, ROOT
 local notes = {}
 
+-- Mining network (MU-0): every sim computer joins the shared test network H.NET unless a
+-- scenario says otherwise (sim.computer/sim.turtle opts.network = false or another table).
+H.NET_WORDS = { "lava", "oak", "ember", "pick" }
+
 function H.init(s, root)
     sim, ROOT = s, root
+    local f = io.open(root .. "/miner/tmcrypto.lua", "rb")
+    if f then
+        f:close()
+        H.C = dofile(root .. "/miner/tmcrypto.lua")
+        H.Wd = dofile(root .. "/miner/tmwords.lua")
+        H.NET = H.network("sim", H.NET_WORDS)
+        sim.defaultNetwork = H.NET
+        sim.serializeNetwork = H.C.serializeNetwork
+    end
 end
+
+-- A network table {name, words, key} as tmjoin would make it.
+function H.network(name, words)
+    name = H.C.normName(name)
+    return { name = name, words = words, key = H.C.deriveKey(name, words) }
+end
+
+local signers = {}
+function H.signer(net)
+    net = net or H.NET
+    if not signers[net] then signers[net] = H.C.signer(net) end
+    return signers[net]
+end
+
+-- Sign a hand-made message with a network (default: the shared test network).
+function H.sign(msg, net)
+    if not H.C then return msg end
+    return H.signer(net).sign(msg)
+end
+
+function H.epochMs() return math.floor(sim.BASE_EPOCH + sim.now * 1000) end
 
 ---------------------------------------------------------------------------
 -- result plumbing
@@ -200,12 +234,17 @@ function H.server(opts)
         events = {},
         onStatus = nil,     -- optional callback(from, msg)
     }
+    -- opts.network: the network it signs with and checks (default H.NET; false = unsigned).
+    local snet = opts.network
+    if snet == nil then snet = H.NET end
+    srv.bad = 0
     local function envelope(kind, to, body)
         srv.seq = srv.seq + 1
         local m = { v = 1, kind = kind, from = srv.id, to = to, boot = srv.boot, seq = srv.seq,
                     ts = math.floor(sim.BASE_EPOCH + sim.now * 1000), hops = 0, hop = 0, ohop = 0,
                     mk = opts.modem or "ender" }
         for k, v in pairs(body or {}) do m[k] = v end
+        if snet then H.sign(m, snet) end
         return m
     end
     function srv.send(to, kind, body, broadcast)
@@ -236,6 +275,11 @@ function H.server(opts)
     end
     sim.net.addNode(srv.id, function(from, msg, protocol)
         if protocol ~= "TMINER" or type(msg) ~= "table" then return end
+        -- Like a real server: drop what isn't signed with its network.
+        if snet and not H.signer(snet).check(msg, H.epochMs()) then
+            srv.bad = srv.bad + 1
+            return
+        end
         srv.msgs[#srv.msgs + 1] = { time = sim.now, from = from, msg = msg }
         local k = msg.kind
         if k == "status" then
@@ -768,6 +812,15 @@ end
 -- Returns srv = {c, M (central_monitor module), rec(id), log()}; M runs in the computer.
 H.SERVER_FILES = { "tminer_server.lua", "central_monitor.lua", "tm_db.lua", "tm_radio.lua", "tm_cluster.lua",
     "tm_ui.lua", "tm_views.lua", "tm_update.lua" }
+-- Shared with the turtles (setup.lua installs them on every computer from miner/).
+H.SHARED_FILES = { "tmcrypto.lua", "tmwords.lua", "tmjoin.lua" }
+
+function H.installShared(c)
+    for _, n in ipairs(H.SHARED_FILES) do
+        local f = io.open(ROOT .. "/miner/" .. n, "rb")
+        if f then c.fs:write(n, f:read("a")); f:close() end
+    end
+end
 
 -- Copy the server program + its modules (servers/*.lua) into a computer's fs root.
 function H.installServer(c)
@@ -776,6 +829,7 @@ function H.installServer(c)
         c.fs:write(n, f:read("a"))
         f:close()
     end
+    H.installShared(c)
 end
 
 -- A server PC running the real tminer_server program (roles detected from its peripherals).
@@ -785,7 +839,7 @@ end
 function H.serverComputer(opts)
     opts = opts or {}
     local c = sim.computer({ id = opts.id, label = opts.label or ("srv" .. tostring(opts.id)), pos = opts.pos,
-        modems = opts.modems, basic = opts.basic, strictTerm = true, termSize = opts.termSize })
+        modems = opts.modems, basic = opts.basic, strictTerm = true, termSize = opts.termSize, network = opts.network })
     if opts.monitor then
         local m = opts.monitor
         c.peripherals[m.side or "top"] = sim.monitorPeripheral(c, m.side or "top", m.w or 29, m.h or 12, m.color ~= false)

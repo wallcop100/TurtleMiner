@@ -1,10 +1,12 @@
--- Version: 1.3.0
+-- Version: 1.4.0
 -- TurtleMiner update server. Serves the files in FILES_DIR to turtles over
 -- rednet protocol "TMINER" (update_check -> update_manifest, file_get -> file).
 -- Versions come from each file's first line: "-- Version: x.y.z".
 -- If FILES_DIR/<role>/ exists (e.g. /files/miner/), that role is served from
 -- there; otherwise every role gets FILES_DIR itself. It relays nothing.
 --
+-- Mining network: answers only requests signed with its network (.tm_network, tmcrypto.lua)
+-- and signs its replies; a turtle ignores replies from any other network.
 -- Usage: update_server [dir]     (default /files/, or settings tminer.update_dir)
 
 local PROTOCOL = "TMINER"
@@ -20,6 +22,16 @@ end
 if settings then pcall(settings.load) end
 local FILES_DIR = args[1] or (settings and settings.get("tminer.update_dir")) or "/files/"
 if FILES_DIR:sub(-1) ~= "/" then FILES_DIR = FILES_DIR .. "/" end
+
+local signer
+do
+    local fn = loadfile("tmcrypto.lua", nil, _ENV) or loadfile("/tmcrypto.lua", nil, _ENV)
+    local ok, C = pcall(fn or error)
+    local n = ok and type(C) == "table" and C.loadNetwork() or nil
+    if n then signer = C.signer(n) end
+end
+if not signer then error("No mining network: run `setup network` (needs tmcrypto.lua).", 0) end
+local bad = 0
 
 local ME = os.getComputerID()
 local BOOT = os.epoch("utc")
@@ -96,7 +108,7 @@ local function envelope(kind, to, body)
     body.v, body.kind, body.from, body.to = 1, kind, ME, to
     body.boot, body.seq, body.ts, body.hops = BOOT, seq, os.epoch("utc"), 0
     body.hop, body.ohop = 0, 0      -- a server: distance 0 (docs/COMMS.md)
-    return body
+    return signer.sign(body)
 end
 
 -- Reply to whoever handed us the message (the turtle, or a relay that will
@@ -126,6 +138,13 @@ local function handle(viaId, msg)
     if type(msg.hops) == "number" and msg.hops > MAX_HOPS then return end
     if msg.kind ~= "update_check" and msg.kind ~= "file_get" then return end
     if not forUs(msg.to) then return end
+    local key = tostring(msg.from) .. ":" .. tostring(msg.boot) .. ":" .. tostring(msg.seq)
+    if seen[key] then return end
+    if not signer.check(msg, os.epoch("utc")) then
+        bad = bad + 1
+        if bad == 1 or bad % 50 == 0 then log(bad .. " foreign/bad message(s) ignored") end
+        return
+    end
     if isDuplicate(msg) then return end
 
     local role = type(msg.role) == "string" and msg.role or "miner"
