@@ -53,6 +53,14 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | CG-4 Monitor cluster + GPS pages | TODO | |
 | CG-T Simulator wired/cluster/GPS geometry | DOING | done: multi-PC clusters, basic/advanced computers (no colour/mouse/multishell), monitor peripherals (basic: no touch), key/char/touch/click input. GPS geometry left for CG-3 |
 
+## HANDOFF (2026-11-01, paused for usage limit)
+
+- Branch `claude/vigilant-pasteur-g2krss` is green: `lua5.4 test/run.lua` → 56/56.
+- **Mesh updates (MU-1..3): unfinished.** The agent was stopped mid-work. Its uncommitted changes (33 files, not tested, not merged) are saved as `docs/wip/mesh_updates_wip.patch`, based on commit ed60bd6. To resume: `git apply docs/wip/mesh_updates_wip.patch` on a branch from ed60bd6 (or rebase), finish per MESH_UPDATE_PLAN.md §2–3, run the suite.
+- **Next in order:** finish mesh updates → army (ARMY_PLAN.md; include overlap check at install + right-of-way when two turtles meet) → GPS offer (CLUSTER_GPS_PLAN.md §3).
+- **Open user reports:** monitor RESUME acked but IDLE turtle didn't move (not reproduced; turtle now prints each applied command — get the screen line + `miner.lua` version next time). Key-derivation speed on a real CC computer unmeasured (`KDF_ITER` in tmcrypto.lua).
+- **Nothing has been accepted in-game yet**; see "In-game acceptance" below.
+
 ## Network + mesh updates (see MESH_UPDATE_PLAN.md)
 
 | WP | Status | Notes |
@@ -225,3 +233,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-01 | coordinator | User: no network prompt, 'setup network' did nothing (setup.lua was never saved locally under wget run). Fix: tmjoin.bootPrompt at boot on tminer_server/relay (waits) and turtles with a modem (60 s, then offline); setup.lua saves itself. |
 | 2026-11-01 | coordinator | Order confirmed by user: GPS offer (CG-3, CG-3b, CG-4) starts straight after mesh updates (MU-1..3). |
 | 2026-11-01 | coordinator | Order agreed with user: finish mesh updates → army (AR-0..AR-5) → GPS offer. Fewer, leaner agents; small fixes done inline. |
+| 2026-11-01 | coordinator | Paused for weekly usage limit. Mesh updates agent stopped; WIP saved to docs/wip/mesh_updates_wip.patch. Handoff section added at top. |
