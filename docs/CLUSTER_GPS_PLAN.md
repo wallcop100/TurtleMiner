@@ -34,17 +34,24 @@ Tracked in [TRACKING.md](TRACKING.md) under "Cluster + GPS". Builds on the comms
 - Any PC can show the UI; commands from any UI go to the leader.
 - Only the leader answers turtles' `home_get`, so turtles never get conflicting answers.
 
-### 3. GPS setup (`setup.lua gps`, or the "GPS" page on the monitor)
+### 3. GPS: offered, never required (decided 2026-11-01)
 
-- **Coordinates for this PC:** if a working GPS already gives a fix here, it offers that. Otherwise it asks you to type X Y Z from F3, looking at the **computer block**. It asks twice and compares, to catch typos.
-- **Constellation check across the cluster:** every host shares its coordinates. The leader checks:
-  - count ≥ 4 hosts with wireless modems (shows "3 of 4: add one more host")
-  - not all in one plane (tetrahedron volume above a minimum; the usual mistake is all hosts at the same Y)
-  - spread: hosts at least 6 blocks apart in each direction
-  - duplicate or impossible coordinates
-- **Coverage report:** from host heights and modem kinds (basic/ender), it estimates the GPS reach: "turtles get GPS down to about Y 20 within 100 blocks; nothing at Y -58". With ender modems: "everywhere in this dimension".
-- **Live self-test:** hosts with a wireless modem ping each other and compare measured distances with the configured coordinates. Any host whose numbers don't add up is flagged ("host #7: coordinates off by ~3 blocks, re-enter").
-- The monitor shows "GPS: 4 hosts OK, reach to Y 20" or what's wrong.
+**When it offers.** The leader keeps a list of cluster PCs with a wireless or ender modem. It offers GPS only when there are at least 4 of them and their layout works (not all in one plane, at least 6 blocks apart; checked from measured distances, see below). Otherwise it **stays quiet**: no hints and no nagging. A PC added later re-triggers the check.
+
+**Where.** A banner on the monitor and a prompt on each eligible PC's own terminal: `GPS possible with 4 PCs: [Set up] [Later] [Never]`. **One confirm for all:** accepting on any screen sets up every eligible PC and clears the prompt everywhere. "Never" is remembered cluster-wide until you turn it back on from the monitor's GPS page.
+
+**Coordinates, automatic first, silent:**
+1. **Measure the layout.** Each wireless PC pings the others on a raw modem channel. A `modem_message` event carries the true distance (rednet events don't, so this uses the modem API directly). Pairwise distances give the exact shape of the constellation, up to position, rotation and mirror image.
+2. **Anchor it to world coordinates without asking**, using any one of:
+   - a PC that already gets a GPS fix (another constellation, ender GPS),
+   - turtles that know their world position (they had a GPS fix) passing within range: they record the measured distance to each PC as they move near home and send the samples to the leader,
+   - a mix of these. The leader solves for the PC positions and accepts only when every measured distance agrees to within 0.5 block.
+3. **Fallback: ask, only as much as needed.** If no anchor exists, the PCs whose coordinates would settle the layout (usually 3) show "Stand here, press F3, type this computer's X Y Z" on their **own terminal**. The monitor shows which PCs are still waiting. Each entry is checked against the measured distances at once ("doesn't match: distance to PC #4 should be 12.0, these coordinates give 15.3"), so typos are caught before anything goes live. The remaining PCs are worked out from the distances.
+4. Implementation note: check in CC:Tweaked's source exactly which point a modem's distance is measured from (the computer or the attached modem block), and solve and announce that point, so every host's announced position matches what turtles measure.
+
+**Hosting.** Once solved, every eligible PC runs the GPS host loop on its wireless or ender modem, alongside its other roles. The monitor's GPS page shows hosts, each one's state, and the coverage estimate (from host heights and modem kinds).
+
+**Drift: fix or pause automatically.** Hosts re-measure each other every 10 minutes, and whenever a cluster member reboots or reappears. If a host's distances stop matching (PC moved or broken), the leader re-solves silently. If that isn't possible, that PC **stops hosting**, so it can't give wrong fixes, and the monitor shows why. If too few hosts remain, GPS stops cleanly (turtles fall back to blind mode) and the offer reappears when it can work again.
 
 ### 4. Turtles
 
@@ -57,10 +64,11 @@ Nothing to configure. They already treat GPS as "available here now or not" (bli
 | CG-0 | Protocol: cluster_hello, snapshot/delta, leader, gps_host_info, gps_check | docs/PROTOCOL.md |
 | CG-1 | `tminer_server`: role detection, run loops in parallel, setup.lua `server` installs it | `servers/tminer_server.lua`, split of `central_monitor.lua` into ui / db / radio modules |
 | CG-2 | Cluster: discovery, leader election, replication, failover | `servers/cluster.lua` |
-| CG-3 | GPS host role + setup wizard + constellation check + self-test + coverage | `servers/gpshost.lua`, `setup.lua` |
+| CG-3 | GPS: eligibility check, offer (monitor + PC terminals, one confirm), raw-modem distance measurement, solver (layout + anchors), minimal manual fallback with live typo check, host loop, drift fix/pause, coverage | `servers/gpshost.lua`, `servers/gpssolve.lua` |
+| CG-3b | Turtles: record raw-modem distances to server PCs near home and send samples (anchor source) | `miner/net.lua` |
 | CG-4 | Monitor: cluster page (members, leader, roles), GPS page | UI module |
 | CG-T | Simulator: wired networks, multi-PC clusters, GPS geometry; scenarios below | `test/**` |
 
-Scenarios: 3 PCs (1 wireless, 2 wired-only) act as one server and turtles stay in contact through the gateway; the leader is switched off and a replica takes over without losing queued commands; the GPS check rejects 1 host, 3 hosts, 4 coplanar hosts and a typo'd host, and accepts a good 4; a turtle gets correct fixes from a wizard-built constellation; coverage estimate matches the sim.
+Scenarios: no offer with 3 wireless PCs or 4 in one plane; offer with 4 good ones, one confirm sets up all; silent setup when one PC has a GPS fix; silent setup from GPS-turtle samples; fallback asks only the needed PCs and rejects a typo; a moved host is paused, then re-solved; turtles get correct fixes from the result. Also: 3 PCs (1 wireless, 2 wired-only) act as one server and turtles stay in contact through the gateway; the leader is switched off and a replica takes over without losing queued commands; the GPS check rejects 1 host, 3 hosts, 4 coplanar hosts and a typo'd host, and accepts a good 4; a turtle gets correct fixes from a wizard-built constellation; coverage estimate matches the sim.
 
 Order: after the comms work is merged (same files). Splitting `central_monitor.lua` (1200 lines) is part of CG-1.

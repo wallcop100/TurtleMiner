@@ -48,7 +48,8 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | CG-0 Protocol | TODO | after comms merge |
 | CG-1 tminer_server + split central_monitor | TODO | |
 | CG-2 Cluster leader/replica/failover | TODO | |
-| CG-3 GPS host + wizard + constellation check | TODO | needs >= 4 wireless hosts, not coplanar |
+| CG-3 GPS offer + silent auto-measure + fallback + drift | TODO | offer only when valid (else quiet); monitor + PC terminals; one confirm; anchors: PC GPS fix / GPS turtles; fallback asks on PC terminal |
+| CG-3b Turtle distance samples | TODO | |
 | CG-4 Monitor cluster + GPS pages | TODO | |
 | CG-T Simulator wired/cluster/GPS geometry | TODO | |
 
@@ -190,3 +191,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-01 | blind agent | Blind turtle: turn crashes without a GPS fix settled by probing the 4 neighbours against the known-open map (journal cells, finished grid cells, home chest; shaft → climb home). Reviewer sweep 26/448 → 442/448. Unlimited-fuel moves settled when the map tells them apart. GPS turtles out of range fall back to blind recovery, failed locates cached. SURFACE_IF_LOST. No network work offline. 39x13 status screen. Scenarios 36-40. Suite 41/41. |
 | 2026-11-01 | coordinator | Blind-turtle work merged (a4acfb4): no-GPS turn-crash recovery 26/448 → 442/448, SURFACE_IF_LOST, status screen. Suite 41/41. Starting CM-2..CM-5. |
 | 2026-11-01 | coordinator | Cluster + GPS phase planned (CLUSTER_GPS_PLAN.md). Source check: gps host needs a wireless modem, wired can't serve GPS, 3 hosts = ambiguous fix → need >= 4 wireless hosts. |
+| 2026-11-01 | coordinator | GPS setup decisions: offered not required; quiet unless >= 4 valid hosts; offer on monitor + PC terminals; one confirm; silent auto-measure (raw modem distances + anchors), fallback asks coords on the PC's own terminal; drift auto-fix or pause host. |
