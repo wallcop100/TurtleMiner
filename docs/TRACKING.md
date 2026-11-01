@@ -53,6 +53,15 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | CG-4 Monitor cluster + GPS pages | TODO | |
 | CG-T Simulator wired/cluster/GPS geometry | TODO | |
 
+## Network + mesh updates (see MESH_UPDATE_PLAN.md)
+
+| WP | Status | Notes |
+|----|--------|-------|
+| MU-0 Mining network join + signed messages | TODO | Closes today's multiplayer hole (anyone can command turtles / pose as update server). First after cluster |
+| MU-1 Mesh updates (summaries, signed releases, chunked transfer, manual-edit detection) | TODO | |
+| MU-2 Probation + rollback + bad marks | TODO | |
+| MU-3 Check now button + updater --pull | TODO | |
+
 ## Army (phase 2, see ARMY_PLAN.md)
 
 | WP | Status | Notes |
@@ -199,3 +208,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-01 | coordinator | README rewritten as a full user guide (install per role, using it, networking, GPS, clustering marked coming, updates, settings, help messages, troubleshooting, dev notes). |
 | 2026-11-01 | coordinator | User report: turtle frozen to commands after RETURN_HOME. Not reproduced on current code (scenario 51: IDLE acks STATUS/SET/PAUSE/RETURN_HOME/UPDATE, RESUME works twice). Asked user for version + what the card shows. |
 | 2026-11-01 | coordinator | User: monitor RESUME showed ok but IDLE turtle didn't move; key R worked. Not reproduced (scenario 51). Turtle now prints every received command on its screen (miner 1.4.1) to tell 'not delivered' from 'delivered but ignored'. Open: get version + screen trace next time. |
+| 2026-11-01 | coordinator | Mesh updates planned (MESH_UPDATE_PLAN.md): multiplayer assumed, network join required at install, every message signed (HMAC-SHA256), devices apply + reboot once, hourly + Check now, auto rollback with bad marks. Starts after cluster; MU-0 first. |
