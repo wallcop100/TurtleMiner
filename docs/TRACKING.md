@@ -45,13 +45,13 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 
 | WP | Status | Notes |
 |----|--------|-------|
-| CG-0 Protocol | TODO | after comms merge |
-| CG-1 tminer_server + split central_monitor | TODO | |
-| CG-2 Cluster leader/replica/failover | TODO | |
+| CG-0 Protocol | DONE | PROTOCOL.md "Cluster": cluster_hello / cluster_leader / cluster_delta (epoch + dseq) / cluster_snap_req / cluster_snapshot / cluster_fwd (cmd, merge); leader-only home_get + queue; leader fleet relayed |
+| CG-1 tminer_server + split central_monitor | DONE | one program, roles per PC at boot + every 60 s (ui/gateway/link/update/gps hook), loops via parallel; modules tm_db 597, tm_radio 344, tm_cluster ~370, tm_ui 524, tm_views 301, tm_update 136 lines; central_monitor.lua = 26-line launcher (same API); setup server/monitor/pocket install it; github_pull installs modules with the launcher (all-or-nothing). Scenario 49 (keyboard-only basic PC + basic monitor) |
+| CG-2 Cluster leader/replica/failover | DONE | servers/tm_cluster.lua: join 3 s, election newest (epoch, dseq) then lowest ID, no preemption, deltas at once/5 s, failover after 15 s + 2 s (measured 15.3 s), forwarded UI commands resent until replicated, split-heal merge. Scenarios 47, 48, 50 |
 | CG-3 GPS offer + silent auto-measure + fallback + drift | TODO | offer only when valid (else quiet); monitor + PC terminals; one confirm; anchors: PC GPS fix / GPS turtles; fallback asks on PC terminal |
 | CG-3b Turtle distance samples | TODO | |
 | CG-4 Monitor cluster + GPS pages | TODO | |
-| CG-T Simulator wired/cluster/GPS geometry | TODO | |
+| CG-T Simulator wired/cluster/GPS geometry | DOING | done: multi-PC clusters, basic/advanced computers (no colour/mouse/multishell), monitor peripherals (basic: no touch), key/char/touch/click input. GPS geometry left for CG-3 |
 
 ## Network + mesh updates (see MESH_UPDATE_PLAN.md)
 
@@ -152,6 +152,10 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 38 | SURFACE_IF_LOST: climbs to 8 open cells, off = stays, fuel floor 50, chest above kept | DONE | PASS |
 | 39 | Offline boot: no waits (first op at 0 s); 39x13 status block | DONE | PASS |
 | 40 | GPS only above Y 0: turn crash at depth recovers blind; no repeated locate waits; lost + SURFACE_IF_LOST gets a fix and goes home | DONE | PASS |
+| 47 | Cluster: 1 wireless + 2 wired-only PCs act as one server (one leader, one home reply, keyboard cmd from wired-only PC applied once) | DONE | PASS |
+| 48 | Leader switched off: replica takes over (15.3 s), queued cmds + homes kept, outage cmd delivered once, old leader rejoins as replica | DONE | PASS |
+| 49 | Keyboard-only UI on a basic PC + basic monitor: every screen, bounds + greyscale checked | DONE | PASS |
+| 50 | Two wired networks bridged by one wireless PC: split leaders merge into one, queued cmd handed over | DONE | PASS |
 
 ## In-game acceptance (you)
 
@@ -209,3 +213,5 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-01 | coordinator | User report: turtle frozen to commands after RETURN_HOME. Not reproduced on current code (scenario 51: IDLE acks STATUS/SET/PAUSE/RETURN_HOME/UPDATE, RESUME works twice). Asked user for version + what the card shows. |
 | 2026-11-01 | coordinator | User: monitor RESUME showed ok but IDLE turtle didn't move; key R worked. Not reproduced (scenario 51). Turtle now prints every received command on its screen (miner 1.4.1) to tell 'not delivered' from 'delivered but ignored'. Open: get version + screen trace next time. |
 | 2026-11-01 | coordinator | Mesh updates planned (MESH_UPDATE_PLAN.md): multiplayer assumed, network join required at install, every message signed (HMAC-SHA256), devices apply + reboot once, hourly + Check now, auto rollback with bad marks. Starts after cluster; MU-0 first. |
+| 2026-11-01 | cluster agent | CG-0..CG-2: tminer_server (one program, roles detected), central_monitor split into tm_db/tm_radio/tm_cluster/tm_ui/tm_views/tm_update (launcher kept), cluster leader/replica/failover over any modem mix, keyboard-driven basic monitors, setup + github_pull updated. Scenarios 47-50. Suite 51/51. GPS hook: optional tm_gps.lua setting T.gps = {wanted(), loop()}. |
+| 2026-11-01 | coordinator | Cluster merged (f1aed0f); setup.lua conflict resolved (keeps safe writes). README updated for tminer_server. |

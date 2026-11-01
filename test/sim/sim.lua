@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.2.0
 -- Headless CC:Tweaked simulator: computers, turtles, a voxel world, an
 -- in-memory rednet, and a single event scheduler on a simulated clock.
 --
@@ -162,7 +162,8 @@ local function newComputer(opts)
     if c.kind == "turtle" then tw, th = 39, 13 end
     if c.pocket then tw, th = 26, 20 end
     if opts.termSize then tw, th = opts.termSize[1], opts.termSize[2] end
-    c.term = Term.new(tw, th, { strict = opts.strictTerm, color = true })
+    c.basic = opts.basic or false           -- basic computer: no colour, no mouse, no multishell
+    c.term = Term.new(tw, th, { strict = opts.strictTerm, color = not c.basic })
     -- Position (for modem range) and modems. A computer without `pos` is in range of every
     -- wireless modem (legacy scenarios). Default modem: ender ("advanced") on the back.
     c.pos = opts.pos and sim.copyPos(opts.pos) or nil
@@ -271,6 +272,34 @@ function sim.modemPeripheral(c, side, wireless, kind, wiredNet)
     function m.isPresentRemote() return false end
     p.methods = m
     return p
+end
+
+-- Monitor: a strict Term (writes off screen are recorded in ._violations). color=false is a
+-- basic monitor: greyscale and it never sends monitor_touch (sim.touch refuses).
+function sim.monitorPeripheral(c, side, w, h, color)
+    local screen = Term.new(w, h, { strict = true, color = color ~= false, monitor = true })
+    local p = { types = { "monitor" }, screen = screen, color = color ~= false, methods = {} }
+    for k, f in pairs(screen) do
+        if type(f) == "function" and k:sub(1, 1) ~= "_" then p.methods[k] = f end
+    end
+    return p
+end
+
+-- Input events (keyboard on the computer; touch only on an advanced monitor; mouse only on
+-- an advanced computer).
+function sim.key(c, key) sim.queue(c, sim.now, { "key", key, false, n = 3 }) end
+function sim.char(c, ch) sim.queue(c, sim.now, { "char", ch, n = 2 }) end
+function sim.touch(c, side, x, y)
+    local p = c.peripherals[side]
+    assert(p and p.types[1] == "monitor", "no monitor on " .. tostring(side))
+    if not p.color then return false end
+    sim.queue(c, sim.now, { "monitor_touch", side, x, y, n = 4 })
+    return true
+end
+function sim.click(c, x, y)
+    if c.basic then return false end
+    sim.queue(c, sim.now, { "mouse_click", 1, x, y, n = 4 })
+    return true
 end
 
 local function chestPeripheral(w, x, y, z)

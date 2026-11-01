@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.2.0
 -- Builds the CC global environment for one boot of one sim computer:
 -- os, sleep, parallel, rednet, peripheral, gps, settings, textutils, term,
 -- window, paintutils, colors, keys, shell, require, fs, turtle, pocket, io,
@@ -719,6 +719,15 @@ function Env.build(sim, c)
     if c.turtle then
         G.turtle = TurtleAPI.build(sim, c, c.turtle)
         G.turtle.native = G.turtle
+    end
+    -- multishell exists only on advanced computers (programs must not rely on it)
+    if not c.basic and not c.turtle then
+        G.multishell = {
+            getCurrent = function() return 1 end, getCount = function() return 1 end,
+            launch = function() error("SIM: multishell.launch not supported", 2) end,
+            setTitle = function() end, getTitle = function() return "" end, setFocus = function() return false end,
+            getFocus = function() return 1 end,
+        }
     end
     if c.pocket then
         G.pocket = {

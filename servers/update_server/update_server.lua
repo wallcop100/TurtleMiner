@@ -1,4 +1,4 @@
--- Version: 1.2.0
+-- Version: 1.3.0
 -- TurtleMiner update server. Serves the files in FILES_DIR to turtles over
 -- rednet protocol "TMINER" (update_check -> update_manifest, file_get -> file).
 -- Versions come from each file's first line: "-- Version: x.y.z".
@@ -11,6 +11,12 @@ local PROTOCOL = "TMINER"
 local MAX_HOPS = 4
 
 local args = { ... }
+-- tminer_server (installed next to this by setup / GitHub pull) serves updates itself, with
+-- one answer per cluster. An old startup that still runs this next to it: stay out of the way.
+if fs.exists("tminer_server.lua") and fs.exists("tm_update.lua") then
+    print("update_server: tminer_server serves updates on this PC; nothing to do.")
+    while true do sleep(3600) end
+end
 if settings then pcall(settings.load) end
 local FILES_DIR = args[1] or (settings and settings.get("tminer.update_dir")) or "/files/"
 if FILES_DIR:sub(-1) ~= "/" then FILES_DIR = FILES_DIR .. "/" end

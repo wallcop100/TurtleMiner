@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.2.0
 -- Pulls newer TurtleMiner files from GitHub into the update server's folder
 -- (and the server's own programs). Used by update_server at boot and every
 -- tminer.pull_minutes (default 60, 0 = boot only).
@@ -18,15 +18,32 @@ M.DEFAULT_BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/claud
 M.MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "net.lua",
             "miner.lua", "updater.lua", "install.lua", "startup.lua" }
 
--- Server programs: repo path -> local path. Only replaced if already present
--- (so a monitor-less update server doesn't suddenly get a monitor).
+-- Server programs: repo path -> local path. Only replaced if already present (so a
+-- monitor-less update server doesn't suddenly get a monitor). The third field lists files
+-- that need this one: it is installed when any of them is present (tminer_server and its
+-- modules come with the central_monitor launcher that now runs them).
+local NEEDS_SERVER = { "central_monitor.lua", "tminer_server.lua", "tminer_startup.lua", "monitor_startup.lua" }
 M.SERVER = {
+    { "servers/tm_db.lua", "tm_db.lua", NEEDS_SERVER },
+    { "servers/tm_radio.lua", "tm_radio.lua", NEEDS_SERVER },
+    { "servers/tm_cluster.lua", "tm_cluster.lua", NEEDS_SERVER },
+    { "servers/tm_ui.lua", "tm_ui.lua", NEEDS_SERVER },
+    { "servers/tm_views.lua", "tm_views.lua", NEEDS_SERVER },
+    { "servers/tm_update.lua", "tm_update.lua", NEEDS_SERVER },
+    { "servers/tminer_server.lua", "tminer_server.lua", NEEDS_SERVER },
     { "servers/central_monitor.lua", "central_monitor.lua" },
     { "servers/update_server/update_server.lua", "update_server.lua" },
     { "servers/update_server/github_pull.lua", "github_pull.lua" },
     { "servers/startup.lua", "monitor_startup.lua" },
+    { "servers/startup.lua", "tminer_startup.lua" },
     { "servers/relay.lua", "relay.lua" },
 }
+
+local function wanted(p)
+    if fs.exists(p[2]) then return true end
+    for _, other in ipairs(p[3] or {}) do if fs.exists(other) then return true end end
+    return false
+end
 
 local function versionOf(text)
     if type(text) ~= "string" then return nil end
@@ -87,27 +104,35 @@ function M.pull(filesDir, log)
     local jobs = {}
     for _, f in ipairs(M.MINER) do jobs[#jobs + 1] = { "miner/" .. f, filesDir .. f, false } end
     for _, p in ipairs(M.SERVER) do
-        if fs.exists(p[2]) then jobs[#jobs + 1] = { p[1], p[2], true } end
+        if wanted(p) then jobs[#jobs + 1] = { p[1], p[2], true } end
     end
 
-    local changed, serverChanged, failed = {}, false, 0
+    -- Fetch and check everything first. Server programs go all-or-nothing: a new launcher
+    -- without its modules would not start.
+    local failed, serverFailed = 0, false
     for _, j in ipairs(jobs) do
         local body = fetch(base .. j[1])
         local nv, nvs = versionOf(body)
         if not body or not nv then
             failed = failed + 1
+            if j[3] then serverFailed = true end
         elseif not load(body, "=" .. j[1], "t", {}) then
             log("pull: " .. j[1] .. " v" .. nvs .. " does not compile, skipped")
             failed = failed + 1
+            if j[3] then serverFailed = true end
         else
             local cv, cvs = versionOf(readFile(j[2]))
-            if newer(nv, cv) then
-                if writeAtomic(j[2], body) then
-                    changed[#changed + 1] = j[2]
-                    if j[3] then serverChanged = true end
-                    log(("pull: %s %s -> %s"):format(j[2], cvs or "missing", nvs))
-                end
-            end
+            if newer(nv, cv) then j.body, j.nvs, j.cvs = body, nvs, cvs end
+        end
+    end
+    if serverFailed then log("pull: server programs not updated (a file is missing upstream)") end
+
+    local changed, serverChanged = {}, false
+    for _, j in ipairs(jobs) do
+        if j.body and not (j[3] and serverFailed) and writeAtomic(j[2], j.body) then
+            changed[#changed + 1] = j[2]
+            if j[3] then serverChanged = true end
+            log(("pull: %s %s -> %s"):format(j[2], j.cvs or "missing", j.nvs))
         end
     end
     local err = nil

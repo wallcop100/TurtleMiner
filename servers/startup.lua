@@ -1,12 +1,12 @@
--- Version: 1.0.0
--- TurtleMiner server startup: runs central_monitor (UI + TMINER relay) and restarts it on crash.
--- No separate bridge is needed: central_monitor opens every modem and relays TMINER traffic.
+-- Version: 2.0.0
+-- TurtleMiner server startup: runs tminer_server (every role this PC has: UI, radio gateway,
+-- cluster link, update server) and restarts it on crash. Same file on every server PC.
 -- Edit the CONFIG block below; nothing else needs changing.
 
 local CONFIG = {
     monitor      = "auto",            -- monitor side/name ("right", "monitor_0"), "auto" = first found, "none" = terminal only
     textScale    = 0.5,               -- monitor text scale (0.5 .. 5)
-    program      = "central_monitor", -- program to run
+    program      = "tminer_server",   -- program to run
     restartDelay = 5,                 -- seconds to wait before restarting after a crash
 }
 

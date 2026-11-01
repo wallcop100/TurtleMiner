@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.2.0
 -- Scenario helpers: pass/fail/skip plumbing, crash predicates, a fake TMINER
 -- server (virtual rednet node), truth-vs-belief watchers and the standard
 -- "turtle at home with a chest behind it" setup.
@@ -766,14 +766,58 @@ end
 ---------------------------------------------------------------------------
 -- opts: id (100), pos, modemKind ("basic"), modems (list, overrides modemKind).
 -- Returns srv = {c, M (central_monitor module), rec(id), log()}; M runs in the computer.
+H.SERVER_FILES = { "tminer_server.lua", "central_monitor.lua", "tm_db.lua", "tm_radio.lua", "tm_cluster.lua",
+    "tm_ui.lua", "tm_views.lua", "tm_update.lua" }
+
+-- Copy the server program + its modules (servers/*.lua) into a computer's fs root.
+function H.installServer(c)
+    for _, n in ipairs(H.SERVER_FILES) do
+        local f = assert(io.open(ROOT .. "/servers/" .. n, "rb"))
+        c.fs:write(n, f:read("a"))
+        f:close()
+    end
+end
+
+-- A server PC running the real tminer_server program (roles detected from its peripherals).
+-- opts: id, label, pos, modems (list), basic (basic computer: no colour), monitor =
+-- {side, w, h, color} (a monitor peripheral; color=false: basic monitor), termSize, noBoot.
+-- Returns srv = {c, T (module table), rec(id), logText(), role(), boot(), kill()}.
+function H.serverComputer(opts)
+    opts = opts or {}
+    local c = sim.computer({ id = opts.id, label = opts.label or ("srv" .. tostring(opts.id)), pos = opts.pos,
+        modems = opts.modems, basic = opts.basic, strictTerm = true, termSize = opts.termSize })
+    if opts.monitor then
+        local m = opts.monitor
+        c.peripherals[m.side or "top"] = sim.monitorPeripheral(c, m.side or "top", m.w or 29, m.h or 12, m.color ~= false)
+    end
+    H.installServer(c)
+    local srv = { c = c }
+    function srv.boot()
+        srv.T = nil
+        sim.boot(c, function(G)
+            local fn = assert(G.loadfile("tminer_server.lua", nil, G))
+            local T = fn("--lib")
+            srv.T = T
+            T.init({})
+            T.run()
+        end, { background = true })
+        sim.run({ maxTime = 0.1 })
+        H.check(srv.T ~= nil, "tminer_server did not start on #%s: %s", tostring(c.id), tostring(c.err))
+    end
+    function srv.kill() sim.kill(c) end
+    function srv.alive() return c.alive end
+    function srv.rec(id) return srv.T.S.turtles[id] end
+    function srv.logText() return table.concat(srv.T.S.log, "\n") end
+    function srv.role() return srv.T.C.role end
+    if not opts.noBoot then srv.boot() end
+    return srv
+end
+
 function H.monitorComputer(opts)
     opts = opts or {}
-    local f = assert(io.open(ROOT .. "/servers/central_monitor.lua", "rb"))
-    local src = f:read("a")
-    f:close()
     local c = sim.computer({ id = opts.id or 100, label = opts.label or "srv", pos = opts.pos,
         modemKind = opts.modemKind or "basic", modems = opts.modems })
-    c.fs:write("central_monitor.lua", src)
+    H.installServer(c)
     local srv = { c = c }
     sim.boot(c, function(G)
         local fn = assert(G.loadfile("central_monitor.lua", nil, G))
@@ -802,6 +846,55 @@ function H.netOnly(t, label)
         net.init({ STATUS_INTERVAL = 10 })
         net.run(function() return { label = label or ("T" .. c.id), phase = "MINING", pos = sim.copyPos(t.pos) } end)
     end, { background = true })
+end
+
+-- Like H.netOnly, plus a script runner: c.jobs (functions job(net, G) run one by one, results
+-- in c.results) and c.applied (every command the turtle took from its inbox, once each).
+function H.netTurtle(t, label)
+    local c = t.computer
+    c.jobs, c.results, c.applied = {}, {}, {}
+    sim.boot(t, function(G)
+        local net = assert(G.loadfile("net.lua", nil, G))()
+        c.net = net
+        net.init({ STATUS_INTERVAL = 10 })
+        G.parallel.waitForAny(function()
+            net.run(function() return { label = label or ("T" .. c.id), phase = "MINING", pos = sim.copyPos(t.pos) } end)
+        end, function()
+            while true do
+                local cmd = net.poll()
+                while cmd do
+                    c.applied[#c.applied + 1] = { id = cmd.id, cmd = cmd.cmd, params = cmd.params, time = sim.now }
+                    cmd = net.poll()
+                end
+                local job = table.remove(c.jobs, 1)
+                if job then c.results[#c.results + 1] = job(net, G) or false else G.sleep(0.5) end
+            end
+        end)
+    end, { background = true })
+    return c
+end
+
+-- Commands a script turtle applied, by name (and SET key).
+function H.appliedCount(c, cmd, key)
+    local n = 0
+    for _, a in ipairs(c.applied or {}) do
+        if a.cmd == cmd and (key == nil or (type(a.params) == "table" and a.params.key == key)) then n = n + 1 end
+    end
+    return n
+end
+
+-- Original transmissions (hops 0, sent by their author) of a kind, as {from=count}.
+function H.originals(kind, t0, pred)
+    local by, n = {}, 0
+    for _, e in ipairs(sim.net.log) do
+        local m = e.msg
+        if e.time >= (t0 or 0) and type(m) == "table" and m.kind == kind and e.from == m.from
+            and (m.hops or 0) == 0 and (pred == nil or pred(m)) then
+            by[e.from] = (by[e.from] or 0) + 1
+            n = n + 1
+        end
+    end
+    return by, n
 end
 
 -- Truth from the turtle itself: the phase in its saved state file.

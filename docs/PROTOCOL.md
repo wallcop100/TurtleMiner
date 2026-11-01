@@ -29,7 +29,7 @@ A node is **in contact** when it heard any message carrying a `hop` (a server, a
 
 Every node dedupes and never relays a copy with `hops >= 4`; relays send `hops + 1` and their own `hop`, `via`, `mk`, never changing `from`.
 
-- **Servers and `relay` computers** (any non-turtle node running our software): relay every message they haven't seen, via `rednet.broadcast` (goes out on every open modem: wired, wireless, ender). A server doesn't relay `fleet`. Skipped when the transmitter is an ender modem and the node has no wired modem (every wireless modem already heard it). This makes the network a mesh across modem types; wired links count as one hop like any other.
+- **Servers and `relay` computers** (any non-turtle node running our software): relay every message they haven't seen, via `rednet.broadcast` (goes out on every open modem: wired, wireless, ender). A server relays `fleet` only when it comes from its cluster leader (so turtles near any gateway hear the one server). Skipped when the transmitter is an ender modem and the node has no wired modem (every wireless modem already heard it). This makes the network a mesh across modem types; wired links count as one hop like any other.
 - **Turtles with an ender modem**: relay everything not sent by an ender modem.
 - **Turtles with a basic modem** (`RELAY=auto`), only with a known hop, only when it moves the message closer:
   - towards the server (`to = "server"`, a server id, or an unknown id from a non-server): `myHop < sender hop` (or the sender's hop is unknown)
@@ -75,7 +75,7 @@ Every node dedupes and never relays a copy with `hops >= 4`; relays send `hops +
 
 ### Store-and-forward (server)
 
-A command to a turtle the server hasn't heard for 30 s is **queued** (card: `CMD: queued`), not sent. Any message from that turtle (any kind it sends) makes the server send its queued commands at once; without an ack within the normal retries (3 s × 4) the command goes back to queued and is sent again the next time the turtle is heard, until acked. A queued command expires after 24 h (`QUEUE_EXPIRE_MS`, top of `central_monitor.lua`) or when a newer command of the same kind (same `cmd`; for `SET` the same key) for the same turtle is issued (`err = "replaced"`). Turtles ack repeats of a cmd id without applying them again.
+A command to a turtle the server hasn't heard for 30 s is **queued** (card: `CMD: queued`), not sent. Any message from that turtle (any kind it sends) makes the server send its queued commands at once; without an ack within the normal retries (3 s × 4) the command goes back to queued and is sent again the next time the turtle is heard, until acked. A queued command expires after 24 h (`QUEUE_EXPIRE_MS`, top of `servers/tm_db.lua`) or when a newer command of the same kind (same `cmd`; for `SET` the same key) for the same turtle is issued (`err = "replaced"`). Turtles ack repeats of a cmd id without applying them again.
 
 **`home_save`**: `home, homeFacing, gps`. Backup of the home record on the server. Sent when home is first set or changed.
 
@@ -114,8 +114,31 @@ A command to a turtle the server hasn't heard for 30 s is **queued** (card: `CMD
 ## Duplicate handling
 
 - Server command retries reuse the same `cmd.id` with a new envelope `seq`. Turtles keep recent cmd ids and re-ack repeats without executing them again.
-- Every server answers `home_get`. Turtles wait the full timeout unless a `found=true` reply arrives, and prefer `found=true` over `found=false`.
+- Only the cluster leader answers `home_get` (and owns the command queue), so a turtle gets one answer however many server PCs there are. Turtles still wait the full timeout unless a `found=true` reply arrives, and prefer `found=true` over `found=false` (older servers, split clusters).
 - `FOCUS` values are short family names (`"diamond"`, `"iron"`, `"ancient_debris"`); the miner matches them as a substring of the ore family.
+
+## Cluster (server PCs, same `TMINER` protocol)
+
+Every server PC runs `tminer_server` (docs/CLUSTER_GPS_PLAN.md). The PCs form one cluster over any modem mix: cluster messages are relayed like everything else (mesh), with `to = "cluster"` (all members) or a member id. Turtles never relay them (`ohop = 0`, `to` is not `"server"`). Pocket computers are not members. Body fields use `dseq` for the data version, because `seq` is the envelope's.
+
+**Data version**: `epoch` (number of the leadership that wrote it; a new leader takes max known + 1) and `dseq` (number of changes applied). Newer = higher epoch, then higher dseq.
+
+| kind | from → to | fields | when |
+|------|-----------|--------|------|
+| `cluster_hello` | any member → `"cluster"` | `role` (`"joining"`, `"electing"`, `"replica"`, `"leader"`), `leader` (id it follows or nil), `epoch`, `dseq`, `roles` (`{ui, gateway, link, update, gps, member}` booleans), `label` | at boot, every 5 s, and at once in reply to a hello from a joining/electing PC (at most once a second) |
+| `cluster_leader` | leader → `"cluster"` | `epoch`, `dseq` | on taking over, in reply to a hello from a PC that doesn't follow it, and when it hears a rival leader it beats (at most once a second) |
+| `cluster_delta` | leader → `"cluster"` | `epoch`, `base` (dseq before), `dseq` (after), `d` = `{turtles, homes, pending, done, log}`; map values `false` = deleted; `log` = array of `{ms, text}` | at once (next 0.5 s tick) when the command queue or homes change, else every 5 s (empty `d` = heartbeat, `base == dseq`) |
+| `cluster_snap_req` | replica → leader id | `epoch`, `dseq` | when a delta doesn't fit (`epoch` differs or `base` ≠ own dseq), after following a new leader; every 3 s until answered |
+| `cluster_snapshot` | leader → requester or `"cluster"` | `epoch`, `dseq`, `db` = `{turtles, homes, pending, done, log}` (`log` = array of lines) | on request; broadcast once on taking over. Pending changes are flushed as a delta first, so nothing arrives twice |
+| `cluster_fwd` | member → leader id | `op = "cmd"`: `id, target, cmd, params, origin` (a UI command, or a pocket's `cmd_relay` with `origin` = pocket id). `op = "merge"`: `pending` (queued commands by id), `homes` | `cmd`: at once, resent every 5 s (also to a new leader) until the id shows up in the replicated `pending` or `done`. `merge`: once, by a leader stepping down |
+
+Rules:
+- **Join**: a booting PC sends `cluster_hello` (`role = "joining"`) and follows the first leader it hears. No leader within 3 s: election. No modem: it leads alone.
+- **Election**: among itself and the members heard in the last 15 s, the newest data (epoch, dseq) wins, then the lowest computer ID. The winner sends `cluster_leader` and a snapshot; the others wait for it (15 s, then they drop it and elect again). A live leader is never replaced by a newcomer, so a rebooted old leader rejoins as a replica.
+- **Failover**: a replica that hears nothing from its leader for 15 s marks it gone, sends a hello (`role = "electing"`), collects hellos for 2 s and elects. The new leader keeps the replicated queue: every pending command becomes queued and goes out when its turtle is next heard (same `id`, so a turtle that already had it only re-acks).
+- **Two leaders** (a split network healed): the one with the higher epoch, then the lower ID, stays. The other sends `cluster_fwd op="merge"` (its queued commands and homes; the leader adds commands it has no id or same-kind command for, and homes newer by `at`), then follows and takes a snapshot.
+- **Leader only**: acts on turtle messages (status, events, away, catch-up, acks), answers `home_get`, stores `home_save`/`home_clear`, owns and transmits commands, sends `fleet`, writes the event log. Replicas relay, show the replicated data, and forward UI commands.
+- **Update server**: of the live members with `roles.update`, only the lowest ID answers `update_check` / `file_get`.
 
 ## Update sub-protocol (same `TMINER` protocol)
 
@@ -133,4 +156,5 @@ Versions are read from the first line of each file: `-- Version: x.y.z`.
 - Turtle status: every 10 s (config `STATUS_INTERVAL`), plus on phase change.
 - Server marks a turtle `SILENT` after 60 s without any message, unless it announced `away` and is not overdue (then `AWAY`, no alert; overdue: `OVERDUE`).
 - Command ACK timeout: 3 s, retried 3 times by the server, then queued until the turtle is heard again (24 h max).
-- Contact window: 30 s. Server `fleet` every 5 s.
+- Contact window: 30 s. Server `fleet` every 5 s (cluster leader only).
+- Cluster: hello every 5 s, delta at once on queue/home changes else every 5 s, leader gone after 15 s silence (+2 s election), join window 3 s, role re-check every 60 s.

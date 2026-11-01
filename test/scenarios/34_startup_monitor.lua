@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- Scenario 34:
 --  A (review #19): miner/startup.lua runs the updater only when the journal says the
 --     turtle is at home: R lines don't count, the last D (or S) line wins, a trailing I
@@ -60,8 +60,23 @@ local function monitorEnv(sim)
     local colors = {}
     for i, n in ipairs({ "white", "orange", "magenta", "lightBlue", "yellow", "lime", "pink", "gray", "lightGray",
         "cyan", "purple", "blue", "brown", "green", "red", "black" }) do colors[n] = 2 ^ (i - 1) end
-    local env = {
-        fs = fsx, colors = colors, colours = colors, textutils = sim.textutils,
+    -- central_monitor.lua is a launcher: tminer_server.lua + tm_*.lua are loaded with loadfile
+    for _, n in ipairs({ "tminer_server.lua", "tm_db.lua", "tm_radio.lua", "tm_cluster.lua", "tm_ui.lua",
+        "tm_views.lua", "tm_update.lua" }) do
+        local f = assert(io.open(sim.REPO .. "/servers/" .. n, "rb"))
+        files[n] = f:read("a")
+        f:close()
+    end
+    local env
+    local function loadfileX(p, mode, e)
+        if not files[p] then return nil, "File not found" end
+        return load(files[p], "=" .. p, "t", e or env)
+    end
+    function fsx.isDir() return false end
+    function fsx.getDir(p) return p:match("^(.*)/[^/]*$") or "" end
+    function fsx.combine(a, b) return (a == "" and b) or (a .. "/" .. b) end
+    env = {
+        fs = fsx, colors = colors, colours = colors, textutils = sim.textutils, loadfile = loadfileX,
         os = {
             epoch = function() clock = clock + 1; return 1700000000000 + clock end,
             queueEvent = function() end, startTimer = function() return 1 end,

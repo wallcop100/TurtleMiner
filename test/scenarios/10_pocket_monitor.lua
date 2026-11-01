@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- Scenario 10: servers/central_monitor.lua on a pocket computer (`pocket` defined,
 -- 26x20 term that records any write past the edge) renders a fleet message.
 return {
@@ -14,7 +14,7 @@ return {
             H.skip("servers/central_monitor.lua does not speak TMINER yet (WP-D pending)")
         end
         local p = sim.computer({ id = 50, label = "pocket", pocket = true, strictTerm = true, modem = "back" })
-        p.fs:write("central_monitor.lua", src)
+        H.installServer(p)   -- central_monitor.lua is a launcher for tminer_server + tm_*.lua
         local srv = H.server({ id = 100 })
         local function st(id, label, phase, reason, alert)
             return { v = 1, kind = "status", from = id, id = id, to = "server", label = label, version = "1.0.0", phase = phase,

@@ -1,10 +1,13 @@
--- Version: 1.2.1
+-- Version: 1.3.1
 -- One-shot downloader. Usage (in CC, needs the HTTP API enabled):
---   wget run <BASE>/setup.lua server    -- update server + monitor on one computer
---   wget run <BASE>/setup.lua monitor   -- monitor only
+--   wget run <BASE>/setup.lua server    -- any server PC: tminer_server + update files (/files/)
+--   wget run <BASE>/setup.lua monitor   -- server PC without update files (same program)
 --   wget run <BASE>/setup.lua pocket    -- pocket computer
 --   wget run <BASE>/setup.lua turtle    -- turtle, without an update server
 --   wget run <BASE>/setup.lua relay     -- relay computer (any modems: ender, basic, wired)
+-- Every server PC runs the same program (tminer_server); it finds its roles itself (UI with a
+-- monitor, radio gateway with a wireless/ender modem, cluster link with a wired modem, update
+-- server with /files/) and the PCs form one cluster with one leader.
 -- BASE = https://raw.githubusercontent.com/wallcop100/TurtleMiner/<branch>
 
 local BRANCH = "claude/vigilant-pasteur-g2krss"
@@ -12,6 +15,9 @@ local BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/" .. BRAN
 
 local MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "net.lua",
                 "miner.lua", "updater.lua", "install.lua", "startup.lua" }
+-- tminer_server and its modules (central_monitor = compatibility launcher for old startups)
+local SERVER = { "tminer_server.lua", "tm_db.lua", "tm_radio.lua", "tm_cluster.lua", "tm_ui.lua",
+                 "tm_views.lua", "tm_update.lua", "central_monitor.lua" }
 
 local function get(src, dst)
     local h, err = http.get(BASE .. src)
@@ -82,31 +88,30 @@ local function writeText(path, text)
 end
 
 local function all(list) for _, p in ipairs(list) do ok = get(p[1], p[2]) and ok end end
+local function writeStartup(text, what)
+    writeText("startup.lua", text)
+end
 
-if role == "server" or role == "monitor" then
-    all({ { "servers/central_monitor.lua", "central_monitor.lua" } })
+if role == "server" or role == "monitor" or role == "pocket" then
+    for _, f in ipairs(SERVER) do all({ { "servers/" .. f, f } }) end
+    all({ { "servers/update_server/github_pull.lua", "github_pull.lua" } })
     if role == "server" then
-        all({ { "servers/update_server/update_server.lua", "update_server.lua" } })
-        all({ { "servers/update_server/github_pull.lua", "github_pull.lua" } })
         for _, f in ipairs(MINER) do all({ { "miner/" .. f, "files/" .. f } }) end
-        -- One startup that runs both the monitor (with crash restart) and the update server.
-        all({ { "servers/startup.lua", "monitor_startup.lua" } })
-        writeText("startup.lua", 'parallel.waitForAny(\n'
-            .. '    function() shell.run("update_server") end,\n'
-            .. '    function() shell.run("monitor_startup") end)\n')
-    else
-        all({ { "servers/startup.lua", "startup.lua" } })
     end
-elseif role == "pocket" then
-    all({ { "servers/central_monitor.lua", "central_monitor.lua" } })
-    writeText("startup.lua", 'shell.run("central_monitor")\n')
+    -- One program, restarted on a crash; roles are detected at boot and every minute.
+    all({ { "servers/startup.lua", "tminer_startup.lua" } })
+    -- Old installs ran update_server next to the monitor: tminer_server does both now.
+    for _, old in ipairs({ "monitor_startup.lua", "update_server.lua" }) do
+        if fs.exists(old) then fs.delete(old); print("del " .. old) end
+    end
+    writeStartup('shell.run("tminer_startup")\n', "tminer_server")
 elseif role == "relay" then
     all({ { "servers/relay.lua", "relay.lua" } })
-    writeText("startup.lua", 'while true do\n'
+    writeStartup('while true do\n'
         .. '    local ok, err = pcall(shell.run, "relay")\n'
         .. '    print("relay stopped: " .. tostring(err))\n'
         .. '    sleep(5)\n'
-        .. 'end\n')
+        .. 'end\n', "relay")
 elseif role == "turtle" then
     for _, f in ipairs(MINER) do all({ { "miner/" .. f, f } }) end
     print("Now run: install")
