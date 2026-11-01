@@ -18,6 +18,14 @@ Consequences:
 
 ## Design rules
 
+0. **General-purpose: detect, never assume.** Every device works out at runtime what it has and what it can reach, and keeps re-checking as things change (a modem added, a relay placed, a turtle moving in or out of range):
+   - own modem: none / basic / ender / wired (by peripheral type and `isWireless`, ender = wireless modem whose upgrade name contains "advanced", or that hears traffic from beyond 400 blocks)
+   - GPS: try `gps.locate` at boot and when it would help (home, surfacing, after a crash); cache "no GPS here" per area so it doesn't keep waiting
+   - server / relays / hubs: learned from what it hears (hop counts carried in every message), never configured
+   - fuel: numeric or unlimited (server config)
+   - storage and fuel chests: scanned at home every visit
+   No setting is required for any of this; settings only override.
+
 1. **Nothing depends on contact.** Mining, recovery and fuel are fully local (already true). GPS-mode turtles fall back to blind recovery when GPS is unreachable (in progress, blind-turtle agent).
 2. **Store-and-forward commands.** The server keeps commands queued per turtle (shown as "queued") and delivers them when the turtle is next heard. Turtles check in on every phase change and when they arrive home. Queued commands expire after a configurable time (default 24 h) or when replaced by a newer command of the same kind.
 3. **Expected absence, not false alarms.** Before leaving home the turtle sends `away` with an ETA (from job size, fuel, and its own measured trip times). The monitor shows "away, back by ~hh:mm". Alert only when overdue by 50% + 2 min, or when a turtle reports NEEDS_HELP/ERROR.
@@ -28,9 +36,9 @@ Consequences:
    - `relay` program for a plain computer: auto-detects its modems (ender, wireless, wired) and relays between all of them. Place one with an ender modem anywhere for full coverage, or one with a basic modem at the shaft bottom for 64 blocks around it.
 6. **How a turtle knows it's in contact:** it heard any server/relay message within the last 30 s. Status sends while out of contact are skipped (no wasted work); the latest status goes out as soon as contact returns.
 
-## Recommended setups
+## What users get with each setup (all automatic)
 
-| You have | Do this | Result |
+| Setup | What happens | Result |
 |----------|---------|--------|
 | No modems | Turtles run blind, keyboard controls | Works; no monitor |
 | Basic modems only | Master at home; optional relay computer at the shaft bottom | Contact near home (and around the relay); store-and-forward covers the rest |

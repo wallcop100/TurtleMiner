@@ -9,7 +9,7 @@ Starts after the review fixes (WP-F) and your in-game test are done. Progress is
 | Fleet size | 4–20 turtles |
 | Traffic | Reservations in 1-wide tunnels |
 | Unloading | One shared chest station |
-| GPS | Existing surface GPS; share it underground for turtles without ender modems |
+| GPS | Any or none: detected at runtime. Optional underground GPS nodes for setups whose hosts can't reach depth |
 | Bridge | Both: turtles relay **automatically** (no setting needed), plus fixed relay computers |
 | Chunk loading | None; player is nearby |
 | Solo turtles | Keep working; easy to join into a group |
