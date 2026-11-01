@@ -11,6 +11,11 @@ Tracked in [TRACKING.md](TRACKING.md) under "Cluster + GPS". Builds on the comms
 
 **Consequence for "3 PCs, 1 wireless + 2 wired":** that gives 1 GPS host, so no GPS fixes. It works fine as a server cluster. For GPS each host PC needs its own wireless modem (a PC can carry wired and wireless at once), and there must be at least 4 of them, not all at one height. The tool detects this and says exactly what's missing.
 
+## Hardware and network rules
+
+- Basic and advanced PCs, monitors and pocket computers are all supported (COMMS.md: keyboard for everything, greyscale fallback, no multishell).
+- The cluster is a mesh: PCs relay between wired, wireless and ender modems, so any mix of wired networks and wireless hops forms one network. GPS hosting still needs a wireless or ender modem on the host itself.
+
 ## What gets built
 
 ### 1. One server program, roles detected per PC
@@ -69,6 +74,6 @@ Nothing to configure. They already treat GPS as "available here now or not" (bli
 | CG-4 | Monitor: cluster page (members, leader, roles), GPS page | UI module |
 | CG-T | Simulator: wired networks, multi-PC clusters, GPS geometry; scenarios below | `test/**` |
 
-Scenarios: no offer with 3 wireless PCs or 4 in one plane; offer with 4 good ones, one confirm sets up all; silent setup when one PC has a GPS fix; silent setup from GPS-turtle samples; fallback asks only the needed PCs and rejects a typo; a moved host is paused, then re-solved; turtles get correct fixes from the result. Also: 3 PCs (1 wireless, 2 wired-only) act as one server and turtles stay in contact through the gateway; the leader is switched off and a replica takes over without losing queued commands; the GPS check rejects 1 host, 3 hosts, 4 coplanar hosts and a typo'd host, and accepts a good 4; a turtle gets correct fixes from a wizard-built constellation; coverage estimate matches the sim.
+Scenarios: no offer with 3 wireless PCs or 4 in one plane; offer with 4 good ones, one confirm sets up all; silent setup when one PC has a GPS fix; silent setup from GPS-turtle samples; fallback asks only the needed PCs and rejects a typo; a moved host is paused, then re-solved; turtles get correct fixes from the result. Also: the whole UI driven by keyboard on a basic PC with a basic monitor (no touch, no colour); two wired networks bridged by one wireless PC form one cluster; 3 PCs (1 wireless, 2 wired-only) act as one server and turtles stay in contact through the gateway; the leader is switched off and a replica takes over without losing queued commands; the GPS check rejects 1 host, 3 hosts, 4 coplanar hosts and a typo'd host, and accepts a good 4; a turtle gets correct fixes from a wizard-built constellation; coverage estimate matches the sim.
 
 Order: after the comms work is merged (same files). Splitting `central_monitor.lua` (1200 lines) is part of CG-1.

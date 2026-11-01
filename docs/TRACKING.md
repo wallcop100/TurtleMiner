@@ -192,3 +192,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-01 | coordinator | Blind-turtle work merged (a4acfb4): no-GPS turn-crash recovery 26/448 → 442/448, SURFACE_IF_LOST, status screen. Suite 41/41. Starting CM-2..CM-5. |
 | 2026-11-01 | coordinator | Cluster + GPS phase planned (CLUSTER_GPS_PLAN.md). Source check: gps host needs a wireless modem, wired can't serve GPS, 3 hosts = ambiguous fix → need >= 4 wireless hosts. |
 | 2026-11-01 | coordinator | GPS setup decisions: offered not required; quiet unless >= 4 valid hosts; offer on monitor + PC terminals; one confirm; silent auto-measure (raw modem distances + anchors), fallback asks coords on the PC's own terminal; drift auto-fix or pause host. |
+| 2026-11-01 | coordinator | Requirement: basic + advanced hardware everywhere (keyboard-first UI, greyscale, no multishell) and full mesh relaying across wired/wireless/ender. Added to COMMS.md + cluster plan; sent to comms agent. |

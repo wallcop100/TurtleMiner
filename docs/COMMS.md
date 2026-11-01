@@ -18,6 +18,14 @@ Consequences:
 
 ## Design rules
 
+**Mesh across modem types.** Every node that isn't a turtle (server, relay, monitor PC, GPS host) relays `TMINER` between all its modems: wired, wireless, ender. Dedupe and the hop limit stop loops. Separate wired networks joined by a wireless hop, wired-only PCs and turtles out of a server's direct range all reach each other. Hop distance counts wired links like any other.
+
+**Basic and advanced hardware.** Everything runs on basic and advanced computers, monitors, pocket computers and turtles. On basic hardware there is no colour, no mouse, no touch from basic monitors, and no `multishell`/`shell.openTab`. So:
+- Every UI action also works from the keyboard (number/letter shortcuts shown on screen). Touch and mouse are extras on advanced hardware.
+- Colours fall back to greyscale (white/lightGray/gray/black) on basic screens. Alerts are shown with text markers (`!`, `[HELP]`), never colour alone.
+- Programs run in parallel with `parallel`, never `multishell`.
+- Fuel limits differ (20 000 normal, 100 000 advanced turtles): always read `turtle.getFuelLimit()`.
+
 0. **General-purpose: detect, never assume.** Every device works out at runtime what it has and what it can reach, and keeps re-checking as things change (a modem added, a relay placed, a turtle moving in or out of range):
    - own modem: none / basic / ender / wired (by peripheral type and `isWireless`, ender = wireless modem whose upgrade name contains "advanced", or that hears traffic from beyond 400 blocks)
    - GPS: try `gps.locate` at boot and when it would help (home, surfacing, after a crash); cache "no GPS here" per area so it doesn't keep waiting
