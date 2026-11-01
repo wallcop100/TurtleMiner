@@ -15,6 +15,13 @@ Starts after the review fixes (WP-F) and your in-game test are done. Progress is
 | Solo turtles | Keep working; easy to join into a group |
 | Order | After the current fixes and in-game test |
 
+## Comms constraint (see COMMS.md)
+
+Basic modems reach 64 blocks, so with no ender modem turtles only talk to the master near home. Rules for the army:
+- Branch claims and the **down** shaft reservation are handed out at the shaft top.
+- The **up** reservation needs contact at the bottom: a relay at the shaft bottom, any ender modem in the network (hub), or, with neither, **timed slots** agreed before leaving (turtle gets "up-shaft window at T+n min"; it waits at the bottom until its window).
+- Turtle-to-turtle relaying helps only within 64 blocks and is never relied on.
+
 ## How it works
 
 ### 1. Groups

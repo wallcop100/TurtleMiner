@@ -31,6 +31,16 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | WP-F Review fixes | agents X/Y/Z | DONE | worktrees | | X: nav/state (#1,#4,#5,#10). Y: inv/mine/sim (#1 scan,#3,#4,#6,#10,#11,#20). Z: miner/monitor/install/README (#7,#8,#9,#12,#14-#19,#21) |
 | WP-G In-game acceptance | you | TODO | | | |
 
+## Comms (see COMMS.md)
+
+| WP | Status | Notes |
+|----|--------|-------|
+| CM-1 GPS-mode turtles recover blind underground; no repeated GPS timeouts | DOING | with blind-turtle agent |
+| CM-2 Store-and-forward commands on server | TODO | after blind-turtle agent |
+| CM-3 `away` + ETA, overdue-only alerts | TODO | |
+| CM-4 Catch-up event log | TODO | |
+| CM-5 Bridge: ender nodes always relay, turtle distance relay, `relay` program | TODO | |
+
 ## Army (phase 2, see ARMY_PLAN.md)
 
 | WP | Status | Notes |
@@ -159,3 +169,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-10-31 | coordinator | WP-F Y merged (7e717a2); goHome now honours mine.retreat result (no digging fallback past protected blocks). Suite 35/35. Ready for in-game test. |
 | 2026-10-31 | coordinator | Update server auto-pulls newer files from GitHub at boot + every 60 min (github_pull.lua), self-updates server programs with one guarded reboot. Tested with fake http/fs. Needs one manual `setup.lua server` re-run to install. |
 | 2026-11-01 | coordinator | Offline use: keyboard controls on the turtle (R/P/B/S/H) so no monitor is needed for RESUME/RESET_HOME. Scenario 35 (no modem, keys) added. Suite 36/36. |
+| 2026-11-01 | coordinator | Modem research (CC:Tweaked source): basic 64 blocks below Y 96, max(sender,receiver), ender = delivered if either end is ender. docs/COMMS.md written; CM-1..CM-5 planned; army plan updated for out-of-range reservations. |
