@@ -4,60 +4,55 @@
 local function createInventoryModule(ctx, status, movement)
     local CONFIG = ctx.CONFIG
 
-    -- Auto-refuel from inventory with detailed reporting
-    local function autoRefuel()
-        local currentFuel = turtle.getFuelLevel()
+    -- Burn fuel items from inventory one at a time until fuel >= target.
+    -- target defaults to the turtle's fuel limit (burn everything).
+    -- Returns true if fuel is at/above target afterwards.
+    local function refuelTo(target)
+        local fuel = turtle.getFuelLevel()
+        if fuel == "unlimited" then return true end
 
-        if currentFuel == "unlimited" then
-            return true
-        end
+        local limit = turtle.getFuelLimit()
+        if not target or target > limit then target = limit end
+        if fuel >= target then return true end
 
-        status.reportEvent("Refueling", "searching for fuel")
-        print("Searching for fuel in inventory...")
-
-        local refueled = false
         local originalSlot = turtle.getSelectedSlot()
-        local totalFuelAdded = 0
-
-        -- Try to refuel from each slot
         for slot = 1, 16 do
+            if turtle.getFuelLevel() >= target then break end
             if turtle.getItemCount(slot) > 0 then
                 turtle.select(slot)
-                local itemsBefore = turtle.getItemCount(slot)
-
-                -- Check if this item is fuel
-                if turtle.refuel(0) then
-                    local fuelBefore = turtle.getFuelLevel()
-                    turtle.refuel(64)
-                    local fuelAfter = turtle.getFuelLevel()
-
-                    if fuelAfter > fuelBefore then
-                        local itemsAfter = turtle.getItemCount(slot)
-                        local consumed = itemsBefore - itemsAfter
-                        local fuelGained = fuelAfter - fuelBefore
-                        
-                        print("Refueled with " .. consumed .. " items from slot " .. slot)
-                        print("Fuel gained: " .. fuelGained)
-                        
-                        totalFuelAdded = totalFuelAdded + fuelGained
-                        refueled = true
-                    end
+                -- refuel(1) returns false for non-fuel items (and empty buckets)
+                while turtle.getFuelLevel() < target
+                      and turtle.getItemCount(slot) > 0
+                      and turtle.refuel(1) do
                 end
             end
         end
-
         turtle.select(originalSlot)
 
-        if refueled then
-            status.reportEvent("Refueled", "+" .. totalFuelAdded .. " fuel")
-            print("Total fuel added: " .. totalFuelAdded)
-            print("New fuel level: " .. turtle.getFuelLevel())
-        else
-            status.reportWarning("No fuel items found")
-            print("No fuel items found in inventory")
+        local gained = turtle.getFuelLevel() - fuel
+        if gained > 0 then
+            print("Refueled +" .. gained .. " (now " .. turtle.getFuelLevel() .. ")")
+            status.reportEvent("Refueled", "+" .. gained .. " fuel")
         end
+        return turtle.getFuelLevel() >= target
+    end
 
-        return refueled
+    -- Auto-refuel from inventory (used at startup). Returns true if any fuel
+    -- was added or the tank is already full.
+    local function autoRefuel(target)
+        local fuel = turtle.getFuelLevel()
+        if fuel == "unlimited" then return true end
+
+        print("Searching for fuel in inventory...")
+        refuelTo(target)
+
+        local newFuel = turtle.getFuelLevel()
+        if newFuel > fuel or newFuel >= turtle.getFuelLimit() then
+            return true
+        end
+        status.reportWarning("No fuel items found")
+        print("No fuel items found in inventory")
+        return false
     end
 
     -- Check inventory usage with detailed reporting
@@ -217,13 +212,32 @@ local function createInventoryModule(ctx, status, movement)
             movement.turnLeft()
         end
 
+        -- Top up from carried fuel before dumping, then keep one fuel
+        -- stack (coal preferred) so the turtle can refuel later underground
+        refuelTo(CONFIG.FUEL_THRESHOLD)
+        local keepSlot, keepScore = nil, -1
+        for i = 1, 16 do
+            local detail = turtle.getItemDetail(i)
+            if detail then
+                turtle.select(i)
+                if turtle.refuel(0) then
+                    local score = detail.count
+                    if detail.name:find("coal") then score = score + 1000 end
+                    if score > keepScore then keepSlot, keepScore = i, score end
+                end
+            end
+        end
+        if keepSlot then
+            print("Keeping fuel in slot " .. keepSlot)
+        end
+
         -- Drop all items
         local itemsDropped = 0
         local failedSlots = {}
 
         for i = 1, 16 do
             turtle.select(i)
-            if turtle.getItemCount(i) > 0 then
+            if i ~= keepSlot and turtle.getItemCount(i) > 0 then
                 local ok = false
 
                 if storageDir == "down" then
@@ -269,39 +283,37 @@ local function createInventoryModule(ctx, status, movement)
         end
     end
 
-    -- Fuel safety check with detailed warnings
-    local function checkFuel()
+    -- Fuel safety check. Burns carried fuel first if running low, and only
+    -- returns false if there still isn't enough to get home.
+    -- multiplier defaults to CONFIG.FUEL_RESERVE_MULTIPLIER.
+    local function checkFuel(multiplier)
         local fuel = turtle.getFuelLevel()
-
-        if fuel == "unlimited" then
-            return true
-        end
+        if fuel == "unlimited" then return true end
 
         local distanceHome = math.abs(ctx.position.x - ctx.homePos.x) +
                              math.abs(ctx.position.y - ctx.homePos.y) +
                              math.abs(ctx.position.z - ctx.homePos.z)
+        local fuelNeeded = distanceHome * (multiplier or CONFIG.FUEL_RESERVE_MULTIPLIER)
 
-        local fuelNeeded = distanceHome * CONFIG.FUEL_RESERVE_MULTIPLIER
+        -- Top up from inventory before it becomes a problem
+        local topUp = math.max(CONFIG.FUEL_THRESHOLD, fuelNeeded * 2)
+        if fuel < topUp then
+            refuelTo(topUp)
+            fuel = turtle.getFuelLevel()
+        end
 
         if fuel < fuelNeeded then
             status.reportWarning("Low fuel: " .. fuel .. " < " .. fuelNeeded .. " needed")
-            print("Low fuel warning!")
-            print("Current: " .. fuel)
-            print("Distance home: " .. distanceHome)
-            print("Fuel needed: " .. fuelNeeded)
+            print("Low fuel! Current: " .. fuel .. ", needed: " .. fuelNeeded ..
+                  " (distance home " .. distanceHome .. ")")
             return false
         end
-
-        -- Early warning at 2x threshold
-        if fuel < fuelNeeded * 2 then
-            status.reportEvent("Fuel status", "getting low (" .. fuel .. ")")
-        end
-
         return true
     end
 
     return {
         autoRefuel = autoRefuel,
+        refuelTo = refuelTo,
         checkInventory = checkInventory,
         findStorage = findStorage,
         emptyInventory = emptyInventory,

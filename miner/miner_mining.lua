@@ -530,18 +530,10 @@ local function createMiningModule(ctx, status, movement, inventory)
             -- Check for ores while descending
             checkSurroundings()
 
-            -- Check fuel - if critically low, stop completely
-            local fuel = turtle.getFuelLevel()
-            if fuel ~= "unlimited" then
-                local distanceHome = math.abs(ctx.position.x - ctx.homePos.x) +
-                                     math.abs(ctx.position.y - ctx.homePos.y) +
-                                     math.abs(ctx.position.z - ctx.homePos.z)
-                local fuelNeeded = distanceHome * CONFIG.FUEL_RESERVE_MULTIPLIER
-                
-                if fuel < fuelNeeded then
-                    status.reportWarning("Low fuel during descent, returning home")
-                    return false
-                end
+            -- Check fuel (burns carried fuel first) - stop if still too low
+            if not inventory.checkFuel() then
+                status.reportWarning("Low fuel during descent, returning home")
+                return false
             end
 
             -- Check inventory
@@ -622,21 +614,11 @@ local function createMiningModule(ctx, status, movement, inventory)
                 end
 
                 -- ===== FUEL CHECK =====
-                local fuel = turtle.getFuelLevel()
-                if fuel ~= "unlimited" then
-                    local distanceHome =
-                        math.abs(ctx.position.x - ctx.homePos.x) +
-                        math.abs(ctx.position.y - ctx.homePos.y) +
-                        math.abs(ctx.position.z - ctx.homePos.z)
-
-                    local fuelNeeded = distanceHome * CONFIG.FUEL_RESERVE_MULTIPLIER
-
-                    if fuel < fuelNeeded then
-                        status.reportWarning("CRITICAL: Low fuel during branch")
-                        print("CRITICAL LOW FUEL - must return home NOW")
-                        result = "CRITICAL_FUEL"
-                        return
-                    end
+                if not inventory.checkFuel() then
+                    status.reportWarning("CRITICAL: Low fuel during branch")
+                    print("CRITICAL LOW FUEL - must return home NOW")
+                    result = "CRITICAL_FUEL"
+                    return
                 end
 
                 -- ===== INVENTORY CHECK =====
@@ -823,19 +805,11 @@ local function createMiningModule(ctx, status, movement, inventory)
                         inventory.emptyInventory()
                         
                         -- Check fuel after returning
-                        local fuel = turtle.getFuelLevel()
-                        if fuel ~= "unlimited" then
-                            local distanceHome = math.abs(ctx.position.x - ctx.homePos.x) +
-                                                math.abs(ctx.position.y - ctx.homePos.y) +
-                                                math.abs(ctx.position.z - ctx.homePos.z)
-                            local fuelNeeded = distanceHome * CONFIG.FUEL_RESERVE_MULTIPLIER * 2
-                            
-                            if fuel < fuelNeeded then
-                                print("Not enough fuel to continue mining")
-                                status.reportWarning("Insufficient fuel to resume")
-                                corridorActive = false
-                                break
-                            end
+                        if not inventory.checkFuel(CONFIG.FUEL_RESERVE_MULTIPLIER * 2) then
+                            print("Not enough fuel to continue mining")
+                            status.reportWarning("Insufficient fuel to resume")
+                            corridorActive = false
+                            break
                         end
                         
                         -- Descend back to mining level (straight down from home)
@@ -881,19 +855,11 @@ local function createMiningModule(ctx, status, movement, inventory)
                     end
 
                     -- Periodic fuel check between branches
-                    local fuel = turtle.getFuelLevel()
-                    if fuel ~= "unlimited" then
-                        local distanceHome = math.abs(ctx.position.x - ctx.homePos.x) +
-                                            math.abs(ctx.position.y - ctx.homePos.y) +
-                                            math.abs(ctx.position.z - ctx.homePos.z)
-                        local fuelNeeded = distanceHome * CONFIG.FUEL_RESERVE_MULTIPLIER
-                        
-                        if fuel < fuelNeeded then
-                            print("Low fuel detected - ending this corridor")
-                            status.reportWarning("Low fuel - moving to new corridor")
-                            corridorActive = false
-                            break
-                        end
+                    if not inventory.checkFuel() then
+                        print("Low fuel detected - ending this corridor")
+                        status.reportWarning("Low fuel - moving to new corridor")
+                        corridorActive = false
+                        break
                     end
                 end
                 
