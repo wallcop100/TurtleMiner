@@ -120,7 +120,15 @@ function M.build(sim, c, t)
             local x, y, z = M.offset(t, which)
             if y < w.minY then return false, "Too low to move" end
             if y > w.maxY then return false, "Too high to move" end
-            if not w:passable(x, y, z) then return false, "Movement obstructed" end
+            if not w:passable(x, y, z) then
+                local o = w:turtleAt(x, y, z)
+                if o then
+                    -- army accounting: a failed move into another turtle (frozen or not)
+                    w.collisions[#w.collisions + 1] = { time = sim.now, by = t.id, with = o.id, x = x, y = y, z = z,
+                        frozen = o.computer.frozen and true or false }
+                end
+                return false, "Movement obstructed"
+            end
             local old = sim.copyPos(t.pos)
             t.prevPos, t.prevFacing = old, t.facing
             t.pos = { x = x, y = y, z = z }
@@ -150,7 +158,12 @@ function M.build(sim, c, t)
         return act(op, function()
             local x, y, z = M.offset(t, which)
             local cell = w:cell(x, y, z)
-            if cell.name == items.AIR or items.FLUID[cell.name] then return false, "Nothing to dig here" end
+            if cell.name == items.AIR or items.FLUID[cell.name] then
+                if w:dugBy(x, y, z) ~= nil and w:dugBy(x, y, z) ~= t.id then
+                    w.redigTries[#w.redigTries + 1] = { time = sim.now, by = t.id, first = w:dugBy(x, y, z), x = x, y = y, z = z }
+                end
+                return false, "Nothing to dig here"
+            end
             if w:turtleAt(x, y, z) then return false, "Unbreakable block" end
             if items.UNBREAKABLE[cell.name] then return false, "Unbreakable block" end
             if not hasPickaxe(t) then return false, "No tool to dig with" end
