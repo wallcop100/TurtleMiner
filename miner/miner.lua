@@ -1,4 +1,4 @@
--- Version: 1.4.3
+-- Version: 1.4.4
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
@@ -1089,6 +1089,7 @@ end
 
 net.init(cfg)
 net.setValidator(validateCmd)
+net.setGpsPos(function() return st and st.gps and type(st.pos) == "table" and st.pos or nil end)
 -- Keyboard controls on the turtle itself, so it can be run with no monitor or modem.
 local KEYHELP = "Keys: R resume  P pause  B return home  S status  H twice = this is home  N network to disk"
 local function keyboard()

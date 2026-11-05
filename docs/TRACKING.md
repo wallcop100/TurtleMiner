@@ -48,9 +48,9 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | CG-0 Protocol | DONE | PROTOCOL.md "Cluster": cluster_hello / cluster_leader / cluster_delta (epoch + dseq) / cluster_snap_req / cluster_snapshot / cluster_fwd (cmd, merge); leader-only home_get + queue; leader fleet relayed |
 | CG-1 tminer_server + split central_monitor | DONE | one program, roles per PC at boot + every 60 s (ui/gateway/link/update/gps hook), loops via parallel; modules tm_db 597, tm_radio 344, tm_cluster ~370, tm_ui 524, tm_views 301, tm_update 136 lines; central_monitor.lua = 26-line launcher (same API); setup server/monitor/pocket install it; github_pull installs modules with the launcher (all-or-nothing). Scenario 49 (keyboard-only basic PC + basic monitor) |
 | CG-2 Cluster leader/replica/failover | DONE | servers/tm_cluster.lua: join 3 s, election newest (epoch, dseq) then lowest ID, no preemption, deltas at once/5 s, failover after 15 s + 2 s (measured 15.3 s), forwarded UI commands resent until replicated, split-heal merge. Scenarios 47, 48, 50 |
-| CG-3 GPS offer + silent auto-measure + fallback + drift | TODO | offer only when valid (else quiet); monitor + PC terminals; one confirm; anchors: PC GPS fix / GPS turtles; fallback asks on PC terminal |
-| CG-3b Turtle distance samples | TODO | |
-| CG-4 Monitor cluster + GPS pages | TODO | |
+| CG-3 GPS offer + silent auto-measure + fallback + drift | DONE | tm_gps + tm_gpssolve; offer only when 4+ PCs and good geometry; raw-modem beacons; anchors: PC fixes, turtle samples, else F3 prompts (3 xyz + 1 number) checked live; host loop; drift/pause/stop. Scenarios 70-74, 76 |
+| CG-3b Turtle distance samples | DONE | net.lua hook (net.setGpsPos) sends gps_sample; scenario 75 |
+| CG-4 Monitor cluster + GPS pages | DONE | NET > GPS / CLUSTER views; keyboard + basic monitor (scenario 76) |
 | CG-T Simulator wired/cluster/GPS geometry | DOING | done: multi-PC clusters, basic/advanced computers (no colour/mouse/multishell), monitor peripherals (basic: no touch), key/char/touch/click input. GPS geometry left for CG-3 |
 
 ## HANDOFF (2026-11-01, paused for usage limit)
@@ -235,3 +235,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-01 | coordinator | Order agreed with user: finish mesh updates → army (AR-0..AR-5) → GPS offer. Fewer, leaner agents; small fixes done inline. |
 | 2026-11-01 | coordinator | Paused for weekly usage limit. Mesh updates agent stopped; WIP saved to docs/wip/mesh_updates_wip.patch. Handoff section added at top. |
 | 2026-11-05 | coordinator | User: refuelling 'doesn't search inv', reports stale level. Cause: at home only the FUEL_KEEP reserve is left after unloading and refuel refused to burn it; only 4 fuel names known; NEEDS_HELP reason never refreshed. Fix: burn reserve at home when short, unknown fuels via refuel(0), live reason with carried count. Scenario 90 (fails on old code, passes now). |
+| 2026-11-05 | gps agent | CG-3/3b/4: GPS offer, measure, solve, host, drift, pages; modem measures from the computer block (CC:Tweaked WirelessModemBlockEntity#getPosition). Scenarios 70-76. |

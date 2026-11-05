@@ -1,4 +1,4 @@
--- Version: 1.2.0
+-- Version: 1.2.1
 -- TurtleMiner network layer (TMINER protocol v1, see docs/PROTOCOL.md and docs/COMMS.md).
 -- One rednet wrapper for the whole turtle. Never moves the turtle.
 -- Works offline: with no modem every send is a silent no-op.
@@ -499,6 +499,26 @@ local function handle(msg, sender)
     end
 end
 
+-- GPS samples (docs/CLUSTER_GPS_PLAN.md CG-3b): a turtle that knows its world position (posFn)
+-- records the raw-modem distance to each server PC it hears directly and sends them, so the
+-- server PCs can anchor a GPS constellation without asking anyone.
+local posFn, gsamp, gsLast, gsSent = nil, {}, {}, 0
+function net.setGpsPos(fn) posFn = fn end
+local function gpsSample(ev)
+    local p, d = ev[5], ev[6]
+    if not posFn or type(p) ~= "table" or p.sProtocol ~= PROTO or type(d) ~= "number" then return end
+    local m = p.message
+    if type(m) ~= "table" or m.hops ~= 0 or m.hop ~= 0 or m.from ~= ev[4]
+        or (m.kind ~= "fleet" and m.kind ~= "cluster_hello") then return end
+    local ok, pos = pcall(posFn)
+    if not ok or type(pos) ~= "table" then return end
+    local l = gsLast[m.from]
+    if l and math.abs(l.x - pos.x) + math.abs(l.y - pos.y) + math.abs(l.z - pos.z) < 2 then return end
+    gsLast[m.from] = { x = pos.x, y = pos.y, z = pos.z }
+    gsamp[#gsamp + 1] = { id = m.from, x = pos.x, y = pos.y, z = pos.z, d = d }
+    if #gsamp > 24 then table.remove(gsamp, 1) end
+end
+
 local function onEvent(ev)
     local e = ev[1]
     if e == "rednet_message" and ev[4] == PROTO then
@@ -506,6 +526,7 @@ local function onEvent(ev)
     elseif e == "timer" then
         fireRelay(ev[2])
     elseif e == "modem_message" then
+        gpsSample(ev)
         -- A basic-modem sender heard from beyond any basic range: our modem is an ender modem.
         local p, d = ev[5], ev[6]
         if not modem.inferred and type(p) == "table" and p.sProtocol == PROTO and type(p.message) == "table"
@@ -621,6 +642,10 @@ function net.run(getStatus)
             onEvent(ev)
         end
         checkContact(getStatus)
+        if #gsamp > 0 and now() - gsSent >= 15000 and net.inContact() then
+            net.send("gps_sample", "server", { s = gsamp })
+            gsamp, gsSent = {}, now()
+        end
         if statusWanted then
             statusWanted = false
             sendStatus(getStatus)

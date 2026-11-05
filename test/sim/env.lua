@@ -1,4 +1,4 @@
--- Version: 1.3.0
+-- Version: 1.3.1
 -- Builds the CC global environment for one boot of one sim computer:
 -- os, sleep, parallel, rednet, peripheral, gps, settings, textutils, term,
 -- window, paintutils, colors, keys, shell, require, fs, turtle, pocket, io,
@@ -635,6 +635,36 @@ function Env.build(sim, c)
             -- c.gps says GPS works; t.gpsMinY: hosts out of range below this Y.
             local t = c.turtle
             local mypos = t and t.pos or c.pos
+            if sim.rawGps then
+                -- real raw-modem exchange: PING on the GPS channel, hosts answer with their
+                -- position, trilaterate from the measured distances (>= 4 hosts, like rom gps)
+                local side
+                for _, s in ipairs(SIDES) do
+                    local p = sim.peripheralAt(c, s)
+                    if p and p.types[1] == "modem" and p.methods.isWireless() then side = s; break end
+                end
+                local p = sim.peripheralAt(c, side)
+                local rch = c.id % 65500
+                p.methods.open(rch)
+                p.methods.transmit(G.gps.CHANNEL_GPS, rch, "PING")
+                local reps = {}
+                local timer = os_.startTimer(timeout or 2)
+                while true do
+                    local ev = table.pack(os_.pullEvent())
+                    if ev[1] == "timer" and ev[2] == timer then break end
+                    if ev[1] == "modem_message" and ev[3] == rch and type(ev[5]) == "table" and #ev[5] == 3
+                        and type(ev[6]) == "number" then
+                        reps[#reps + 1] = { x = ev[5][1], y = ev[5][2], z = ev[5][3], d = ev[6] }
+                    end
+                end
+                local M = sim.gpsSolver
+                local fix = M and M.trilat(reps)
+                if fix then
+                    local r = M.round(fix)
+                    return r.x, r.y, r.z
+                end
+                return nil
+            end
             if sim.gpsHosts then
                 local me = sim.endpoint(c, false)
                 local n = 0

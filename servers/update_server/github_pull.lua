@@ -1,4 +1,4 @@
--- Version: 1.3.1
+-- Version: 1.3.2
 -- Pulls newer TurtleMiner files from GitHub into the update server's folder
 -- (and the server's own programs). Used by update_server at boot and every
 -- tminer.pull_minutes (default 60, 0 = boot only).
@@ -34,6 +34,8 @@ M.SERVER = {
     { "servers/tm_ui.lua", "tm_ui.lua", NEEDS_SERVER },
     { "servers/tm_views.lua", "tm_views.lua", NEEDS_SERVER },
     { "servers/tm_update.lua", "tm_update.lua", NEEDS_SERVER },
+    { "servers/tm_gps.lua", "tm_gps.lua", NEEDS_SERVER },
+    { "servers/tm_gpssolve.lua", "tm_gpssolve.lua", NEEDS_SERVER },
     { "servers/tminer_server.lua", "tminer_server.lua", NEEDS_SERVER },
     { "servers/central_monitor.lua", "central_monitor.lua" },
     { "servers/update_server/update_server.lua", "update_server.lua" },

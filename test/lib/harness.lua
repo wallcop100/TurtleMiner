@@ -1,4 +1,4 @@
--- Version: 1.3.0
+-- Version: 1.3.1
 -- Scenario helpers: pass/fail/skip plumbing, crash predicates, a fake TMINER
 -- server (virtual rednet node), truth-vs-belief watchers and the standard
 -- "turtle at home with a chest behind it" setup.
@@ -811,7 +811,7 @@ end
 -- opts: id (100), pos, modemKind ("basic"), modems (list, overrides modemKind).
 -- Returns srv = {c, M (central_monitor module), rec(id), log()}; M runs in the computer.
 H.SERVER_FILES = { "tminer_server.lua", "central_monitor.lua", "tm_db.lua", "tm_radio.lua", "tm_cluster.lua",
-    "tm_ui.lua", "tm_views.lua", "tm_update.lua" }
+    "tm_ui.lua", "tm_views.lua", "tm_update.lua", "tm_gps.lua", "tm_gpssolve.lua" }
 -- Shared with the turtles (setup.lua installs them on every computer from miner/).
 H.SHARED_FILES = { "tmcrypto.lua", "tmwords.lua", "tmjoin.lua" }
 
@@ -966,6 +966,37 @@ function H.sentBy(id, t0, t1, kind)
             and (kind == nil or (type(e.msg) == "table" and e.msg.kind == kind)) then n = n + 1 end
     end
     return n
+end
+
+-- Keyboard on a server PC's terminal UI: Tab until the button labelled `label` has focus, Enter.
+function H.uiTerminal(S)
+    for _, u in ipairs(S.T.S.uis) do if u.side == nil then return u end end
+end
+function H.uiPress(S, label)
+    local ui = H.uiTerminal(S)
+    local K = S.c.env.keys
+    for _ = 1, 80 do
+        local b = ui.focus and ui.buttons[ui.focus]
+        if b and b.key == label then
+            sim.key(S.c, K.enter); sim.run({ maxTime = 0.3 })
+            return ui
+        end
+        sim.key(S.c, K.tab); sim.run({ maxTime = 0.1 })
+    end
+    H.fail("no button %q on #%s:\n%s", label, tostring(S.c.id), S.c.term._text())
+end
+function H.uiType(S, text)
+    for ch in text:gmatch(".") do sim.char(S.c, ch); sim.run({ maxTime = 0.1 }) end
+    sim.key(S.c, S.c.env.keys.enter); sim.run({ maxTime = 0.5 })
+end
+
+-- Real raw-modem GPS in the sim: hosts (virtual, {pos=,kind=}) answer PING; turtle and PC
+-- gps.locate trilaterate from the measured distances.
+function H.rawGps(hosts)
+    sim.rawGps = true
+    sim.net.modemEvents = true                     -- rednet traffic also raises modem_message (distances)
+    sim.gpsHosts = hosts
+    sim.gpsSolver = dofile(ROOT .. "/servers/tm_gpssolve.lua")
 end
 
 return H

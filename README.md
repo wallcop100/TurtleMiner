@@ -2,7 +2,7 @@
 
 Branch mining for CC:Tweaked turtles that keeps going on its own. Turtles save their position before every move, survive server restarts and chunk unloads, burn the coal they find, and say plainly when they need help. A monitor (computer screen, monitor wall or pocket computer) shows the whole fleet and sends commands. It works with no modem at all, basic modems, ender modems, wired networks, or any mix, on basic or advanced hardware. Everything is detected automatically; settings only override.
 
-> Status: the turtle, monitor, comms, update server, server clustering and the mining network (signed messages) are done and tested in a simulator (56 scenarios). **The GPS setup offer and mesh updates are being built** (sections marked *coming*). Nothing here has been signed off in a live world yet; please report what you see.
+> Status: the turtle, monitor, comms, update server, server clustering and the mining network (signed messages) are done and tested in a simulator (56 scenarios). **The GPS setup offer is done; mesh updates are being built** (sections marked *coming*). Nothing here has been signed off in a live world yet; please report what you see.
 
 Contents: [Quick start](#quick-start) · [What you need](#what-you-need) · [Install](#install) · [Using it](#using-it) · [Networking](#networking) · [GPS](#gps) · [Clustering](#clustering) · [Mining network](#mining-network) · [Updates](#updates) · [Settings](#settings) · [Phases and help messages](#phases-and-help-messages) · [Troubleshooting](#troubleshooting) · [For developers](#for-developers)
 
@@ -213,10 +213,14 @@ gps host <x> <y> <z>
 ```
 (Put that line in its `startup.lua` to survive reboots.) Test with `gps locate` on a pocket computer.
 
-### GPS offer *(coming)*
-The server cluster will do this for you. When it sees at least 4 computers with wireless/ender modems laid out well enough for GPS, it offers `GPS possible with 4 PCs: [Set up] [Later] [Never]` on the monitor and on each of those computers. One "Set up" configures all of them. It measures their positions itself from modem distances (silently, if any computer already gets a GPS fix or GPS turtles pass nearby), and only falls back to asking for F3 coordinates, on that computer's own screen, for as few computers as needed, checking each entry against the measured distances to catch typos. Hosts re-check each other every 10 minutes; one that has moved or breaks stops hosting rather than give wrong positions. If there aren't enough suitable computers it stays quiet. Plan: `docs/CLUSTER_GPS_PLAN.md`.
+### GPS offer
+The server cluster does this for you, and only when it can work. When the leader finds at least 4 computers with wireless/ender modems that are not all in one plane and at least 6 blocks apart (checked from distances they measure to each other over the raw modem channel), it offers `GPS possible with 4 PCs: [Set up] [Later] [Never]` on the monitor and on each of those PCs' own terminal (Tab/arrows + Enter works on basic computers). With 3 PCs, or 4 in one plane, it stays silent.
 
----
+One confirm sets up all of them. The layout is anchored to world coordinates without asking when it can: PCs that already get a GPS fix, or samples from turtles that know their position and walk near the PCs (they send the raw-modem distance to each PC they hear). Otherwise only the PCs needed are asked on their own terminal: three type `X Y Z` (F3, "Targeted Block" while looking at that computer), one more types a single number to tell the mirror image apart; the rest are worked out. Each entry is checked against the measured distances at once and a typo is rejected with the distance that does not fit.
+
+Hosts then answer `gps locate` like `gps host` does, from their wireless/ender modem, next to their other jobs. The measured and announced point is the block the modem is attached to (the computer block), which is what a turtle measures against. Every 10 minutes, and when a PC reboots or reappears, they measure again: a moved PC is re-solved silently from the others; one that cannot be is paused (it stops answering, the GPS page says why); with fewer than 4 usable hosts GPS stops cleanly and the offer returns when it can work again. `Never` is remembered by the whole cluster; turn it back on from NET > GPS. NET > CLUSTER shows members, leader and roles; the GPS page shows hosts, their state and a coverage estimate.
+
+Limits: a single PC with a fix cannot orient the layout (it needs 3-4 fixes or turtle samples, else the PCs are asked); PCs added after setup are not added until the next set-up; raw distance beacons are unsigned (the leader cross-checks them).
 
 ## Clustering
 

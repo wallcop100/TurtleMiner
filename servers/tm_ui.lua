@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.1.1
 -- TurtleMiner server UI, part 1: drawing helpers, the turtle list and the turtle card, the
 -- render dispatch, keyboard / mouse / touch input and the UI loop. Any number of displays
 -- (monitors + the PC's own terminal, or a pocket). Keyboard first (docs/COMMS.md): arrow keys
@@ -251,7 +251,7 @@ local function renderList(ui)
     for _, r in ipairs(arr) do if r.alert then nAlert = nAlert + 1 end end
     local title = S.mode == "server" and ("TMINER srv#" .. S.myId) or "TMINER pocket"
     header(ui, title, #arr .. (nAlert > 0 and (" " .. nAlert .. "!") or ""), false)
-    local bodyTop, bodyBot = 2, h - 1
+    local bodyTop, bodyBot = 2 + (T.gpsBanner and T.gpsBanner(ui) or 0), h - 1
     local bodyH = bodyBot - bodyTop + 1
     if bodyH < 1 then return end
     local rowsPer = (w >= 30 and bodyH >= #arr * 2) and 2 or 1
@@ -260,7 +260,7 @@ local function renderList(ui)
     if ui.page > pages then ui.page = pages end
     if ui.page < 1 then ui.page = 1 end
     if #arr == 0 then
-        put(ui, 1, 2, trunc(S.mode == "pocket" and "Waiting for server..." or "No turtles heard yet", w), colors.lightGray)
+        put(ui, 1, bodyTop, trunc(S.mode == "pocket" and "Waiting for server..." or "No turtles heard yet", w), colors.lightGray)
     end
     for i = 1, perPage do
         local r = arr[(ui.page - 1) * perPage + i]
@@ -364,6 +364,7 @@ function T.render(ui)
         ui.out = ui.dev
     end
     ui.buttons = {}
+    if T.gpsPrompt then T.gpsPrompt(ui) end
     ui.out.setBackgroundColor(colors.black)
     ui.out.clear()
     local fn = T.VIEWS[ui.view]
@@ -388,7 +389,8 @@ end
 -- One step back (Backspace): the card from its sub-screens, the list from the card / log.
 function T.back(ui)
     if ui.view == "list" then return false end
-    if ui.view == "detail" or ui.view == "log" or ui.view == "net" then ui.view = "list"
+    if ui.view == "gps" or ui.view == "cluster" then ui.view = "net"
+    elseif ui.view == "detail" or ui.view == "log" or ui.view == "net" then ui.view = "list"
     elseif ui.view == "netconfirm" or ui.view == "netcode" then ui.view = "net"
     else ui.view = "detail" end
     ui.msg = nil
@@ -400,7 +402,7 @@ end
 function T.navKey(ui, key)
     if not keys then return false end
     -- Number entry: Enter is OK and Backspace deletes (typed digits; see T.keyInput).
-    if ui.view == "num" and (key == keys.enter or key == keys.numPadEnter or key == keys.backspace) then return false end
+    if (ui.view == "num" or ui.view == "gpsask") and (key == keys.enter or key == keys.numPadEnter or key == keys.backspace) then return false end
     local n = #ui.buttons
     if key == keys.down or key == keys.right or key == keys.tab then
         if n == 0 then return true end
@@ -412,7 +414,7 @@ function T.navKey(ui, key)
         local b = ui.buttons[ui.focus]
         ui.focus = 1
         b.fn()
-    elseif key == keys.backspace and ui.view ~= "num" then
+    elseif key == keys.backspace and ui.view ~= "num" and ui.view ~= "gpsask" then
         if not T.back(ui) then return false end
         ui.focus = 1
     else
@@ -472,6 +474,9 @@ function T.keyInput(e, v)
         if e == "char" and v:match("^[0-9%-]$") then T.numKey(ui, v)
         elseif e == "key" and v == keys.backspace then T.numKey(ui, "DEL")
         elseif e == "key" and (v == keys.enter or v == keys.numPadEnter) then T.numOk(ui) end
+        T.render(ui)
+    elseif ui.view == "gpsask" and T.gpsKey then
+        T.gpsKey(ui, e, v)
         T.render(ui)
     end
     follow(ui)

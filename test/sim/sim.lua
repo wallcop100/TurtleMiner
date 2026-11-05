@@ -1,4 +1,4 @@
--- Version: 1.3.0
+-- Version: 1.3.1
 -- Headless CC:Tweaked simulator: computers, turtles, a voxel world, an
 -- in-memory rednet, and a single event scheduler on a simulated clock.
 --
@@ -271,7 +271,7 @@ function sim.modemPeripheral(c, side, wireless, kind, wiredNet)
     function m.isOpen(ch) return chans()[ch] == true end
     function m.closeAll() c.channels[side] = {} end
     function m.transmit(ch, reply, msg)
-        sim.net.transmit(c, ch, reply, msg)
+        sim.net.transmit(c, ch, reply, msg, side)
     end
     function m.getNameLocal() return nil end
     function m.getNamesRemote() return {} end
@@ -487,15 +487,37 @@ function sim.newNet()
     function net.inject(fromId, toId, msg, protocol)
         net.deliver(fromId, toId, msg, protocol)
     end
-    function net.transmit(c, ch, reply, msg)
+    -- Raw transmit from the modem on `side` of c: the distance is measured between the two
+    -- computers' positions (CC:Tweaked: the block each modem is attached to), per modem pair.
+    local function only(ep, side)
+        local r = { pos = ep.pos, modems = {} }
+        for _, m in ipairs(ep.modems) do if m.side == side then r.modems[#r.modems + 1] = m end end
+        return r
+    end
+    function net.transmit(c, ch, reply, msg, fromSide)
         local src = sim.endpoint(c, false)
+        if fromSide then src = only(src, fromSide) end
         for _, o in ipairs(sim.computers) do
             if o ~= c and o.alive and not o.halted then
                 for side, chs in pairs(o.channels) do
                     if chs[ch] then
-                        local ok, dist = sim.reach(src, sim.endpoint(o, false))
+                        local ok, dist = sim.reach(src, only(sim.endpoint(o, false), side))
                         if ok then
                             sim.queue(o, sim.now + net.latency, { "modem_message", side, ch, reply, World.deepcopy(msg), dist or 10, n = 6 })
+                        end
+                    end
+                end
+            end
+        end
+        -- virtual GPS hosts (sim.gpsHosts + sim.rawGps): answer a PING like the rom gps host
+        if sim.rawGps and sim.gpsHosts and ch == 65534 and msg == "PING" then
+            for _, h in ipairs(sim.gpsHosts) do
+                local ok, dist = sim.reach(src, { pos = h.pos, modems = { { kind = h.kind or "basic", side = "v" } } })
+                if ok and dist then
+                    for side, chs in pairs(c.channels) do
+                        if chs[reply] then
+                            sim.queue(c, sim.now + net.latency, { "modem_message", side, reply, 65534,
+                                { h.pos.x, h.pos.y, h.pos.z }, dist, n = 6 })
                         end
                     end
                 end

@@ -1,4 +1,6 @@
-# Server Cluster + GPS Constellation Plan (next phase)
+# Server Cluster + GPS Constellation Plan
+
+**Status 2026-11-05: CG-3, CG-3b, CG-4 built** (servers/tm_gps.lua, servers/tm_gpssolve.lua; scenarios 70-76). Measured point: the block a wireless modem is attached to (CC:Tweaked WirelessModemBlockEntity getPosition = modem pos relative to its facing), i.e. the computer block. Deviations: the mirror-image question is one extra number from a 4th PC; PCs added after setup join at the next set-up.
 
 Tracked in [TRACKING.md](TRACKING.md) under "Cluster + GPS". Builds on the comms work (COMMS.md). General-purpose: every PC detects its own hardware and role; no settings required.
 

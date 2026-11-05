@@ -169,6 +169,21 @@ Rules:
 - **Leader only**: acts on turtle messages (status, events, away, catch-up, acks), answers `home_get`, stores `home_save`/`home_clear`, owns and transmits commands, sends `fleet`, writes the event log. Replicas relay, show the replicated data, and forward UI commands.
 - **Update server**: of the live members with `roles.update`, only the lowest ID answers `update_check` / `file_get`.
 
+## GPS (server PCs, same `TMINER` protocol, `servers/tm_gps.lua`)
+
+Raw modem channel 65501 (unsigned): `{tmgps="b", id, round}` beacons; the receiver takes the `modem_message` distance (between the two computer blocks). GPS hosts answer `PING` on `gps.CHANNEL_GPS` with `{x,y,z}` like rom `gps host`.
+
+| kind | from -> to | body | when |
+|------|-----------|------|------|
+| `gps_info` | wireless PC -> `"cluster"` | `mk` (`basic`/`ender`) | every 20 s |
+| `gps_measure` | leader -> `"cluster"` | `round` | to measure distances (offer check, setup, every 10 min, member reboot/reappear) |
+| `gps_dist` | PC -> leader | `round`, `d` (id -> distance heard) | 5 s after a measure |
+| `gps_locate` / `gps_fix` | leader -> cluster / PC -> leader | `round` / `x,y,z` (absent: no fix) | setup anchor: PCs that already get a GPS fix |
+| `gps_cmd` | PC -> leader | `op` = accept, later, never, enable, cancel, stop | UI buttons |
+| `gps_answer` / `gps_reply` | PC -> leader / leader -> PC | `x,y,z` (axis question: `x` only) / `ok`, `err` | F3 coordinate entry, checked at once |
+| `gps_state` | leader -> `"cluster"` | `st` (idle, offer, setup, asking, on), `offer` (ids), `hosts` (id -> `{x,y,z,st,why}`), `asks`, `kinds`, `never`, `later`, `note`, `rev` | every 5 s and on change; replicas persist it in `.tm_gps` |
+| `gps_sample` | turtle -> `"server"` | `s` = list of `{id,x,y,z,d}` (turtle world position, raw-modem distance to server PC `id`) | up to every 15 s while a turtle knows its position |
+
 ## Update sub-protocol (same `TMINER` protocol)
 
 | kind | direction | fields |

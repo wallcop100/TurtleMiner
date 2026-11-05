@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.1.1
 -- TurtleMiner server UI, part 2: the turtle card, command buttons, SET pickers (number,
 -- yes/no, focus ore), confirmations, the text / event log views and the mining network
 -- screen (NET: join requests to approve, show the join phrase after a confirmation, copy
@@ -319,6 +319,10 @@ local function renderNet(ui)
         local ok, err = T.netToDisk()
         ui.msg = ok and "network copied to the disk" or tostring(err)
     end }
+    if T.VIEWS.gps then
+        defs[#defs + 1] = { "GPS", colors.blue, function() ui.view = "gps" end }
+        defs[#defs + 1] = { "CLUSTER", colors.blue, function() ui.view = "cluster" end }
+    end
     defs[#defs + 1] = { "BACK", colors.gray, function() ui.view = "list"; ui.msg = nil end }
     local lines = netLines(ui)
     for _, r in ipairs(reqs) do
