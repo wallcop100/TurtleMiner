@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- TurtleMiner server cluster (docs/CLUSTER_GPS_PLAN.md section 2, docs/PROTOCOL.md "Cluster").
 -- Every server PC runs this. Over any modem mix (the radio part relays across wired,
 -- wireless and ender modems) the PCs find each other with `cluster_hello`, pick ONE leader
@@ -13,6 +13,7 @@
 --     leader (`cluster_fwd`) and resent until they show up in the replicated queue.
 --   * two leaders that meet (a healed split): higher epoch, then lower ID stays; the other
 --     hands over its queued commands and homes and becomes a replica.
+--   * hellos carry the PC's mesh-update summary (`vs`, `us`) and program version (`ver`).
 local T = ...
 local S = T.S
 
@@ -54,8 +55,13 @@ end
 -- Sending
 -- ---------------------------------------------------------------------------
 local function hello(t)
-    send("cluster_hello", "cluster", { role = C.role, leader = C.leader, epoch = S.epoch, dseq = S.dbSeq,
-        roles = T.roles, label = os.getComputerLabel and os.getComputerLabel() or nil })
+    local body = { role = C.role, leader = C.leader, epoch = S.epoch, dseq = S.dbSeq,
+        roles = T.roles, label = os.getComputerLabel and os.getComputerLabel() or nil }
+    if T.mesh then
+        T.addSummary(body)
+        body.ver = T.myVersion()
+    end
+    send("cluster_hello", "cluster", body)
     C.lastHello = t
 end
 
@@ -308,6 +314,22 @@ function T.updateServes()
     local t = now()
     for id, m in pairs(C.members) do
         if id < S.myId and live(m, t) and type(m.roles) == "table" and m.roles.update then return false end
+    end
+    return true
+end
+
+-- GitHub pull ("Check now", updater --pull): this PC can (HTTP + update role + github_pull.lua).
+function T.canPull()
+    return S.mode == "server" and http ~= nil and T.roles ~= nil and T.roles.update == true
+        and T.update ~= nil and T.update.hasPuller ~= nil and T.update.hasPuller()
+end
+
+-- Of the live PCs that can pull, the lowest ID answers `pull_req`.
+function T.pullServes()
+    if not T.canPull() then return false end
+    local t = now()
+    for id, m in pairs(C.members) do
+        if id < S.myId and live(m, t) and type(m.roles) == "table" and m.roles.update and m.roles.http then return false end
     end
     return true
 end

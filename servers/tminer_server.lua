@@ -1,4 +1,4 @@
--- Version: 1.1.2
+-- Version: 1.2.0
 -- TurtleMiner server: ONE program for every server PC (docs/CLUSTER_GPS_PLAN.md section 1).
 -- Each PC works out its roles at boot and every 60 s (and when a peripheral changes):
 --   monitor attached / pocket      -> UI (keyboard first; touch and mouse are extras)
@@ -12,7 +12,9 @@
 -- A pocket computer runs as a client: it shows the leader's `fleet` and sends `cmd_relay`.
 --
 -- Files next to this program: tm_db, tm_radio, tm_cluster, tm_ui, tm_views, tm_update (.lua),
--- tmcrypto.lua (signing). Mining network: .tm_network (`setup network` creates or joins one);
+-- tmcrypto.lua (signing), tmmesh.lua + tmguard.lua (mesh updates: every PC and pocket fetches,
+-- serves and applies updates; applied when nobody used the PC for 30 s and no command is in
+-- flight, then one restart; docs/MESH_UPDATE_PLAN.md). Mining network: .tm_network (`setup network` creates or joins one);
 -- without it the PC sends and accepts nothing.
 -- Usage: tminer_server [monitorSide|auto|none] [textScale]      (tminer_server --lib -> API)
 
@@ -74,6 +76,7 @@ function T.detectRoles()
         end
     end
     r.update = S.mode == "server" and T.update.present()
+    r.http = http ~= nil
     r.gps = r.gateway and S.mode == "server" and type(T.gps) == "table" and type(T.gps.wanted) == "function"
         and T.gps.wanted() == true or false
     T.roles = r
@@ -92,15 +95,81 @@ local function loopSig(r) return tostring(r.update) .. tostring(r.gps) end
 -- ---------------------------------------------------------------------------
 -- Init / tick / run
 -- ---------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- Mesh updates (tmmesh.lua)
+-- ---------------------------------------------------------------------------
+local IDLE_MS = 30000
+S.lastInput = 0
+
+function T.meshStart()
+    T.mesh = nil
+    local path = T.modulePath("tmmesh")
+    if not path or not S.network or not T.crypto then return end
+    local fn = loadfile(path, nil, _ENV)
+    local okL, Mesh = pcall(fn or error)
+    if not okL or type(Mesh) ~= "table" then return end
+    T.Mesh = Mesh
+    local gpath = T.modulePath("tmguard")
+    local guard = nil
+    if gpath then
+        local gfn = loadfile(gpath, nil, _ENV)
+        local okG, g = pcall(gfn or error)
+        if okG and type(g) == "table" then guard = g end
+    end
+    local files = S.mode == "server" and T.update.present() and T.update.dir() or nil
+    local okE, E = pcall(function()
+        return Mesh.new({ role = S.mode == "pocket" and "pocket" or "server", files = files, key = S.network.key,
+            crypto = T.crypto, myId = S.myId, guard = guard,
+            send = function(kind, to, body) return T.send(kind, to, body) end,
+            log = function(text) T.logLine("update: " .. tostring(text)) end,
+            announce = function() T.sendBeacon() end,
+            servesServer = function() return T.updateServes and T.updateServes() or false end,
+            onBad = function() T.markDirty() end }).init()
+    end)
+    if okE then T.mesh = E else T.logLine("update: mesh failed to start: " .. tostring(E)) end
+end
+
+-- Idle: nobody pressed a key / touched the screen for 30 s and no command waits for an ack.
+function T.idle(t)
+    t = t or T.now()
+    if t - (S.lastInput or 0) < IDLE_MS then return false end
+    for _, p in pairs(S.pending) do
+        if not p.queued and not p.forwarded then return false end
+    end
+    return true
+end
+
+function T.meshTick(t)
+    local E = T.mesh
+    if not E then return end
+    local ok, err = pcall(E.tick)
+    if not ok then S.meshErr = tostring(err) end
+    if S.mode == "pocket" and t - (S.lastBeacon or 0) >= 60000 then T.sendBeacon() end
+    local okR, r = pcall(E.ready)
+    if okR and r and T.idle(t) then
+        local okA, applied, info = pcall(E.apply)
+        if not okA then
+            T.logLine("update: apply error: " .. tostring(applied))
+        elseif applied and info and info.reboot then
+            T.logLine("update: restarting into the new version")
+            T.saveDb()
+            os.reboot()
+        end
+        T.markDirty()
+    end
+end
+
 function T.init(opts)
     opts = opts or {}
     S.mode = opts.mode or (pocket ~= nil and "pocket" or "server")
     S.myId = os.getComputerID()
     S.boot = T.now()
+    S.lastInput = S.boot
     S.cfg = { monitor = opts.monitor or "auto", scale = opts.scale or 0.5 }
     T.loadNetwork()
     T.openModems()
     T.detectRoles()
+    T.meshStart()
     if S.mode == "server" then
         T.loadDb()
         T.loadLog()
@@ -123,6 +192,7 @@ function T.tick()
     T.updateAlerts(t)
     T.clusterTick(t)
     T.tickRadio(t)
+    T.meshTick(t)
     if t - S.lastDirtyTick >= 1000 then S.lastDirtyTick = t; T.markDirty() end
 end
 
@@ -178,6 +248,9 @@ end
 
 -- Old name for the API table (central_monitor.lua --lib returned M with the same fields).
 T.M = T
+
+-- For debugging (lua> TMINER_SERVER.S) and the simulator's scenarios.
+if _G then _G.TMINER_SERVER = T end
 
 if args[1] == "--lib" then return T end
 do  -- No mining network yet: ask on this computer's screen before starting.

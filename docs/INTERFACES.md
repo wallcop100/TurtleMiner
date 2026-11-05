@@ -205,10 +205,28 @@ net.network() -> name|nil         -- mining network (.tm_network); nil = none: o
 ## installer / updater (WP-E)
 
 - `install.lua`: the only interactive program. Writes `tminer.*` settings and `startup.lua`.
-- `updater.lua`: `updater.run(opts) -> updated(bool)`; CLI `updater [--check]`. Called from `startup.lua` before `miner` when the state file says the turtle is at home (or no state). Never rewrites `startup.lua` if present.
-- `startup.lua`: `require("updater").run(opts)` (guarded with pcall, only when at home: last D/S journal line is home, R lines ignored, trailing I line = not home; one reboot max via `.tm_updated`), then `shell.run("miner")`.
+- `updater.lua` (every device): `updater.run(opts) -> updated(bool), info{files, reason, pending, reboot}`; opts `mesh` (a running engine; `wait` s to ask the network first), `stagedOnly` (install what was fetched, no network), `check`, `timeout`, `log`. CLI `updater [--check | --pull]`. Never reboots. A turtle's `startup.lua` is replaced only when it is ours (version line) or the installer's fallback.
+- `startup.lua`: `tmguard.boot()` (finish an interrupted install, count probation boots), then `require("updater").run({stagedOnly=true})` only when at home (last D/S journal line is home, R lines ignored, trailing I line = not home; one reboot max via `.tm_updated`), then `tmguard.run("miner")` (crash in probation → rollback).
 - `install.lua`: if old state files exist, asks whether this is a new home spot (deletes them); with no local state left it sends `home_clear` so the servers forget the old home.
 - `install.lua` first joins the mining network (required; `tmjoin.ensure`); flags `--join <4 words> [--name n]`, `--create [name]`, `--disk [--wipe-disk]`, `--approve`, `--network` (change only). `updater` refuses replies not signed with the turtle's network.
+
+## Mesh update modules (MU-1..3)
+
+```
+tmmesh:  SETS {miner, server, relay} (repo paths), NET_MODS, localName(name), layout(role, filesDir),
+         versionOf, compare, compiles, KINDS, new(o) -> engine E
+         o = {role "turtle"|"server"|"pocket"|"relay", files, key, crypto, send(kind,to,body), myId, log,
+              announce(), servesServer(), atHome(), guard, onBad()}
+         E.init(), E.scanStep(bytes)/E.scan(yieldFn)/E.ensureScan(yieldFn), E.scanned, E.summary() -> vs|nil,
+         E.heard(from, vs), E.handle(msg), E.tick(), E.ready() -> "apply"|"rollback"|nil, E.apply() -> ok,
+         {files, reboot}, E.originate(name, text), E.checkNow(to), E.markBad(ids, reason), E.badList(),
+         E.held(name), E.heldVersion(name), E.holds(name), E.want(), E.pending(), E.stateText(), E.tripDone(),
+         E.probation(), E.idle()
+tmguard: boot(journalOnly), run(prog, ...) -> ok, err, applyJournal(j), rollback(p, reason, noReboot),
+         probation(), passed(), readRollback(), clearRollback(), pendingJournal()
+```
+- Files: `.tm_mesh/state` (notes: inst/staged/best, bad marks, sha cache), `.tm_mesh/stage/<repo path>`, `.tm_mesh/applying` (journal), `.tm_mesh/probation`, `.tm_mesh/rollback`.
+- Turtle: `net.mesh()` (engine in net.run; `vs`/`us` on status and hello); miner installs at REFUELING / IDLE-like at home when `E.ready()`, calls `E.tripDone()` on arrival. Server: `T.mesh`, `T.Mesh`, `T.idle()`, `T.checkNow()`, `T.canPull()`, `T.pullServes()`, `T.sendBeacon()`, `S.devs`, `S.pullMsg`, view `updates`; `_G.TMINER_SERVER` / `_G.TMINER_NET` for debugging.
 
 ## Mining network modules (MU-0)
 

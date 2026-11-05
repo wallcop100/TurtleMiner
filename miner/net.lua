@@ -1,4 +1,4 @@
--- Version: 1.2.1
+-- Version: 1.3.0
 -- TurtleMiner network layer (TMINER protocol v1, see docs/PROTOCOL.md and docs/COMMS.md).
 -- One rednet wrapper for the whole turtle. Never moves the turtle.
 -- Works offline: with no modem every send is a silent no-op.
@@ -12,6 +12,9 @@
 -- .tm_network (tmcrypto.lua); unsigned, foreign, tampered, replayed or stale messages are
 -- dropped (never relayed) and counted in net.stats.bad. No network file: nothing is sent or
 -- accepted. Duplicates are checked before the signature, so repeats cost nothing.
+-- Mesh updates (tmmesh.lua): status/hello carry the version summary `vs` (and `us`, what the
+-- update is doing); summaries heard from others trigger fetches; list/file requests addressed
+-- to this turtle are served. net.mesh() returns the engine (miner applies at home).
 
 local net = {}
 
@@ -65,14 +68,17 @@ local function loadMod(name)
     return nil
 end
 local crypto = loadMod("tmcrypto")
+local Mesh = loadMod("tmmesh")
 local signer = nil        -- nil: no network (send nothing, accept nothing)
 local netName = nil
+local mesh = nil          -- tmmesh engine (needs the network)
+local netKey = nil
 
 local function loadNetwork()
-    signer, netName = nil, nil
+    signer, netName, netKey = nil, nil, nil
     if not crypto then return end
     local n = crypto.loadNetwork()
-    if n then signer, netName = crypto.signer(n), n.name end
+    if n then signer, netName, netKey = crypto.signer(n), n.name, n.key end
 end
 loadNetwork()
 
@@ -289,6 +295,12 @@ function net.send(kind, to, body)
     msg.to = to or "server"
     msg.boot, msg.seq, msg.ts, msg.hops = bootId, seq, now(), 0
     stampHop(msg)
+    if mesh and (kind == "status" or kind == "hello") then
+        local okS, vs = pcall(mesh.summary)
+        if okS then msg.vs = vs end
+        local okU, us = pcall(mesh.stateText)
+        if okU then msg.us = us end
+    end
     signer.sign(msg)
     ringAdd(seen, tostring(myId) .. ":" .. tostring(bootId) .. ":" .. tostring(seq), msg.sig)
     -- Broadcast so every server (and relay) hears it; `to` says who it's for.
@@ -488,7 +500,13 @@ local function handle(msg, sender)
         local mode = relayModeFor(msg, (net.hop()))
         if mode then scheduleRelay(key, msg, mode) end
     end
+    if mesh and type(msg.vs) == "table" then pcall(mesh.heard, msg.from, msg.vs) end
     if to ~= "all" and tonumber(to) ~= myId then return end
+    if mesh and Mesh.KINDS[msg.kind] then
+        local okM, err = pcall(mesh.handle, msg)
+        if not okM then net.stats.meshErr = tostring(err) end
+        return
+    end
     if msg.kind == "cmd" then
         handleCmd(msg)
     elseif waiting[msg.kind] and waiting[msg.kind] > 0 then
@@ -554,11 +572,31 @@ function net.statusNow()
     os.queueEvent(EV_STATUS)
 end
 
+-- The mesh update engine (nil without a network or tmmesh.lua).
+function net.mesh() return mesh end
+
+local function meshTick()
+    if not mesh then return end
+    local ok, err = pcall(mesh.tick)
+    if not ok then net.stats.meshErr = tostring(err) end
+end
+
 function net.init(c)
     if type(c) == "table" then cfg = c end
+    if _G then _G.TMINER_NET = net end     -- debugging (lua> TMINER_NET.mesh()) and the simulator
     loadNetwork()
     readOverrides()
     openModems()
+    mesh = nil
+    if Mesh and signer and netKey then
+        local okM, e = pcall(function()
+            return Mesh.new({ role = "turtle", key = netKey, crypto = crypto, myId = myId,
+                send = function(kind, to, body) return net.send(kind, to, body) end,
+                log = function(text) net.event("info", "update: " .. tostring(text)) end,
+                announce = function() net.statusNow() end }).init()
+        end)
+        if okM then mesh = e else net.stats.meshErr = tostring(e) end
+    end
     if net.online() then return true end
     if not signer then return false, "no mining network (run install --network)" end
     return false, "no modem"
@@ -635,6 +673,7 @@ function net.run(getStatus)
             timer = os.startTimer(interval())
         elseif e == "timer" and ev[2] == hk then
             hk = net.online() and os.startTimer(HOUSEKEEP) or nil
+            meshTick()
         elseif e == "peripheral" or e == "peripheral_detach" then
             openModems()
             if not hk and net.online() then hk = os.startTimer(HOUSEKEEP) end

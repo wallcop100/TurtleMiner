@@ -1,4 +1,4 @@
--- Version: 1.1.1
+-- Version: 1.2.0
 -- TurtleMiner server, radio part: TMINER envelope, dedupe, modems, relaying (mesh across
 -- wired / wireless / ender, docs/COMMS.md), the turtle protocol (docs/PROTOCOL.md) and the
 -- `fleet` heartbeat. Loaded into the shared table T after tm_db.lua.
@@ -8,6 +8,9 @@
 -- .tm_network (tmcrypto.lua); unsigned / foreign / tampered / replayed / stale messages are
 -- dropped, never relayed, and counted (S.bad, list footer, a log line at most every 5 min).
 -- Only `join_req` (a new device asking to join, approved on the UI) is read unsigned.
+-- Mesh updates: `fleet` and `beacon` carry this PC's version summary `vs`; every heard `vs`
+-- goes to tmmesh (fetch what is newer) and to S.devs (the UPDATES screen); list/file requests
+-- and bad marks go to tmmesh; `pull_req` / `pull_res` are the "Check now" GitHub pull.
 local T = ...
 local S = T.S
 
@@ -360,6 +363,77 @@ local function relay(msg, hops)
     pcall(rednet.broadcast, c, PROTO)
 end
 
+-- ---------------------------------------------------------------------------
+-- Mesh updates: summaries, devices seen, Check now
+-- ---------------------------------------------------------------------------
+S.devs = {}
+
+-- Version of this PC's program (the UPDATES screen; cluster hellos and beacons carry it).
+function T.myVersion()
+    local E = T.mesh
+    local v = E and E.heldVersion("servers/tminer_server.lua")
+    if v then return v end
+    local p = T.modulePath and T.modulePath("tminer_server")
+    local line = p and T.readFile(p)
+    return line and line:match("^%-%-%s*Version:%s*([%d%.]+)") or "?"
+end
+
+function T.addSummary(body)
+    local E = T.mesh
+    if not E then return body end
+    local ok, vs = pcall(E.summary)
+    if ok then body.vs = vs end
+    local okU, us = pcall(E.stateText)
+    if okU then body.us = us end
+    return body
+end
+
+-- A beacon: pockets every minute and any PC right after it released something.
+function T.sendBeacon()
+    if not T.mesh then return end
+    S.lastBeacon = now()
+    send("beacon", "all", T.addSummary({ dev = S.mode == "pocket" and "pocket" or "server", ver = T.myVersion(),
+        label = os.getComputerLabel and os.getComputerLabel() or nil }))
+end
+
+local DEV_KIND = { status = "turtle", hello = "turtle", cluster_hello = "server", fleet = "server" }
+local function noteDev(msg)
+    local d = S.devs[msg.from] or {}
+    S.devs[msg.from] = d
+    d.kind = DEV_KIND[msg.kind] or (type(msg.dev) == "string" and msg.dev) or d.kind or "?"
+    d.ver = msg.version or msg.ver or d.ver
+    d.vs, d.us, d.at = msg.vs, msg.us, now()
+    if msg.label then d.label = trunc(tostring(msg.label), 20) end
+end
+
+S.pullMsg = nil
+-- Check now: this PC pulls itself (HTTP + update role), or asks the one that can.
+function T.checkNow()
+    if T.canPull and T.canPull() then
+        T.update.pullWanted = { from = S.myId }
+        S.pullMsg = "pulling from GitHub..."
+    else
+        send("pull_req", "server", {})
+        S.pullMsg = "asked the update PC to pull..."
+        S.pullAskedAt = now()
+    end
+    T.markDirty()
+end
+
+local function onPullReq(msg)
+    if S.mode ~= "server" or not (T.pullServes and T.pullServes()) then return end
+    T.update.pullWanted = { from = msg.from }
+    T.logLine("update: GitHub pull asked by #" .. msg.from)
+end
+
+local function onPullRes(msg)
+    if msg.to ~= S.myId then return end
+    if msg.ok == false then S.pullMsg = "#" .. msg.from .. ": " .. tostring(msg.err)
+    else S.pullMsg = "#" .. msg.from .. " pulled: " .. tostring(msg.n or 0) .. " new file(s)" end
+    S.pullAskedAt = nil
+    T.markDirty()
+end
+
 function T.handleMessage(sender, msg, protocol)
     if protocol ~= PROTO or type(msg) ~= "table" then return end
     if msg.v ~= 1 or type(msg.kind) ~= "string" or type(msg.from) ~= "number"
@@ -385,6 +459,21 @@ function T.handleMessage(sender, msg, protocol)
         if S.mode == "server" and T.gpsMessage then T.gpsMessage(msg) end
         return
     end
+    if type(msg.vs) == "table" then
+        noteDev(msg)
+        if T.mesh then pcall(T.mesh.heard, msg.from, msg.vs) end
+    end
+    if T.mesh and T.Mesh and T.Mesh.KINDS[k] and not (k == "file_get" and msg.sha == nil) then
+        if msg.to == S.myId or msg.to == "all" or msg.to == "server" then
+            local okM, err = pcall(T.mesh.handle, msg)
+            if not okM then S.meshErr = tostring(err) end
+        end
+        T.markDirty()
+        return
+    end
+    if k == "pull_req" then onPullReq(msg); return end
+    if k == "pull_res" then onPullRes(msg); return end
+    if k == "beacon" then T.markDirty(); return end
     if k:sub(1, 8) == "cluster_" then
         if S.mode == "server" and T.clusterMessage then T.clusterMessage(msg) end
         return
@@ -439,7 +528,9 @@ function T.sendFleet(t)
     end
     table.sort(arr, function(a, b) return a.id < b.id end)
     local label = os.getComputerLabel and os.getComputerLabel() or nil
-    send("fleet", "all", { turtles = arr, server = { id = S.myId, label = label } })
+    local body = { turtles = arr, server = { id = S.myId, label = label } }
+    T.addSummary(body)
+    send("fleet", "all", body)
     S.lastFleet = t
 end
 

@@ -93,6 +93,7 @@ Every node dedupes and never relays a copy with `hops >= 4`; relays send `hops +
 | `stats` | `{ores, blocks, trips, uptime}` |
 | `lastError` | string or nil (max 200 chars) |
 | `cfg` | `{targetY, focus}` |
+| `vs`, `us` | mesh-update summary and state (see "Mesh updates"); also on `hello` |
 
 **`event`**: `level` (`"info"|"warn"|"error"`), `text` (max 200 chars), `eid` (`"<id>:<boot>:<n>"`, unique per event). Used for things worth logging (vein found, refuelled, recovered from crash). Not per block. Sent only in contact; otherwise buffered for `catchup`.
 
@@ -135,6 +136,7 @@ A command to a turtle the server hasn't heard for 30 s is **queued** (card: `CMD
 **`fleet`** (every 5 s, `to = "all"`)
 `turtles`: array of the latest `status` tables, each with an added `id` (turtle computer ID), `lastSeen` (ms epoch on the server), `alert` (string or nil: `"NEEDS_HELP"`, `"ERROR"`, `"SILENT"`, `"OVERDUE"`), `away` (`{since, eta}` or nil) and `queued` (number of queued commands or nil). The heartbeat that keeps turtles in contact.
 `server`: `{id, label}`
+`vs`, `us`: the leader's mesh-update summary (see "Mesh updates").
 
 ### Pocket → server
 
@@ -154,7 +156,7 @@ Every server PC runs `tminer_server` (docs/CLUSTER_GPS_PLAN.md). The PCs form on
 
 | kind | from → to | fields | when |
 |------|-----------|--------|------|
-| `cluster_hello` | any member → `"cluster"` | `role` (`"joining"`, `"electing"`, `"replica"`, `"leader"`), `leader` (id it follows or nil), `epoch`, `dseq`, `roles` (`{ui, gateway, link, update, gps, member}` booleans), `label` | at boot, every 5 s, and at once in reply to a hello from a joining/electing PC (at most once a second) |
+| `cluster_hello` | any member → `"cluster"` | `role` (`"joining"`, `"electing"`, `"replica"`, `"leader"`), `leader` (id it follows or nil), `epoch`, `dseq`, `roles` (`{ui, gateway, link, update, http, gps, member}` booleans), `label`, `ver`, `vs`, `us` (mesh updates) | at boot, every 5 s, and at once in reply to a hello from a joining/electing PC (at most once a second) |
 | `cluster_leader` | leader → `"cluster"` | `epoch`, `dseq` | on taking over, in reply to a hello from a PC that doesn't follow it, and when it hears a rival leader it beats (at most once a second) |
 | `cluster_delta` | leader → `"cluster"` | `epoch`, `base` (dseq before), `dseq` (after), `d` = `{turtles, homes, pending, done, log}`; map values `false` = deleted; `log` = array of `{ms, text}` | at once (next 0.5 s tick) when the command queue or homes change, else every 5 s (empty `d` = heartbeat, `base == dseq`) |
 | `cluster_snap_req` | replica → leader id | `epoch`, `dseq` | when a delta doesn't fit (`epoch` differs or `base` ≠ own dseq), after following a new leader; every 3 s until answered |
@@ -167,7 +169,7 @@ Rules:
 - **Failover**: a replica that hears nothing from its leader for 15 s marks it gone, sends a hello (`role = "electing"`), collects hellos for 2 s and elects. The new leader keeps the replicated queue: every pending command becomes queued and goes out when its turtle is next heard (same `id`, so a turtle that already had it only re-acks).
 - **Two leaders** (a split network healed): the one with the higher epoch, then the lower ID, stays. The other sends `cluster_fwd op="merge"` (its queued commands and homes; the leader adds commands it has no id or same-kind command for, and homes newer by `at`), then follows and takes a snapshot.
 - **Leader only**: acts on turtle messages (status, events, away, catch-up, acks), answers `home_get`, stores `home_save`/`home_clear`, owns and transmits commands, sends `fleet`, writes the event log. Replicas relay, show the replicated data, and forward UI commands.
-- **Update server**: of the live members with `roles.update`, only the lowest ID answers `update_check` / `file_get`.
+- **Update server**: of the live members with `roles.update`, only the lowest ID answers `list_get` to `"server"` (and the legacy `update_check` / `file_get`); of those with `roles.update` and `roles.http`, the lowest ID answers `pull_req`.
 
 ## GPS (server PCs, same `TMINER` protocol, `servers/tm_gps.lua`)
 
@@ -184,16 +186,39 @@ Raw modem channel 65501 (unsigned): `{tmgps="b", id, round}` beacons; the receiv
 | `gps_state` | leader -> `"cluster"` | `st` (idle, offer, setup, asking, on), `offer` (ids), `hosts` (id -> `{x,y,z,st,why}`), `asks`, `kinds`, `never`, `later`, `note`, `rev` | every 5 s and on change; replicas persist it in `.tm_gps` |
 | `gps_sample` | turtle -> `"server"` | `s` = list of `{id,x,y,z,d}` (turtle world position, raw-modem distance to server PC `id`) | up to every 15 s while a turtle knows its position |
 
-## Update sub-protocol (same `TMINER` protocol)
+
+## Mesh updates (same `TMINER` protocol; docs/MESH_UPDATE_PLAN.md, `miner/tmmesh.lua`)
+
+Every device (turtle, server PC, pocket, relay) runs the same engine. It holds the **role file sets** (`tmmesh.SETS`, repo paths): `miner` (turtles; also `files/` on an update-role PC), `server` (server PCs and pockets), `relay` (relays; also `files/` on an update-role PC). The network modules (`tmcrypto`, `tmwords`, `tmjoin`, `tmmesh`, `tmguard`, `updater`, `setup.lua`) are in every set. A device installs only files of the sets it holds, and serves anything it holds.
+
+**Version summary** `vs` (added to messages the device already sends): `status` and `hello` (turtles), `fleet` (leader), `cluster_hello` (every server PC), `beacon` (relays every 60 s, pockets every 60 s, any PC right after it released something). `vs = {m=, s=, r=, b=}`: per set it holds the first 6 hex chars of SHA-256 over `name@version;...` of every file of the set (`-` = missing); `b` = the same over the ids of the bad marks it knows (absent when none). About 40 bytes. `us` (optional) = what its update is doing (`"get tm_ui.lua +2"`, `"ready"`, `"probation"`, `"rollback"`), shown on the UPDATES screen. `ver` = the device's main program version (`cluster_hello`, `beacon`).
+
+A device that hears a `vs` different from its own, for a set both hold (or a different `b`), asks that peer for its list, once per distinct summary (a summary already seen in a list is not asked again; the same peer at most once a minute).
 
 | kind | direction | fields |
 |------|-----------|--------|
-| `update_check` | turtle → server | `role` (`"miner"`) |
-| `update_manifest` | update server → turtle | `files`: array of `{name, version}` |
-| `file_get` | turtle → update server | `name` |
-| `file` | update server → turtle | `name, version, content` |
+| `beacon` | relay / pocket / PC → `"all"` | `dev` (`"relay"`, `"pocket"`, `"server"`), `ver`, `label`, `vs`, `us` |
+| `list_get` | any → peer id (or `"server"`: answered by the lowest-ID live PC with `/files/`) | none |
+| `files_list` | peer → requester | `notes` = release notes of everything it holds, `marks` = bad marks it knows, `vs` |
+| `file_get` | any → peer id | `name` (repo path), `sha` (the note's `sha256`), `off` (byte offset) |
+| `file_chunk` | peer → requester | `name`, `sha`, `off`, `total`, `data` (at most 16384 bytes from `off`), or `err` (`"not here"`) |
+| `bad` | device that rolled back → `"all"` | `marks` = array of bad marks (sent once; they also spread in `files_list`) |
+| `pull_req` | any → `"server"` | none. The lowest-ID live PC with HTTP + `/files/` pulls from GitHub now |
+| `pull_res` | that PC → requester | `ok`, `n` (new releases), `err` |
 
-All four are signed like every message; the turtle's updater (and `install`'s bootstrap fetch) ignores manifests and files that don't check with its own key.
+**Release note** (signed on its own, so it is passed on unchanged): `{t = "rel", name, version, sha256 (64 hex), size, origin (device id), ts, sig}`, `sig` = first 32 hex of HMAC-SHA256(network key, canonical form of the note without `sig`) (same canonical form as messages; `t` keeps notes and messages apart). A note is accepted only with a valid `sig`; a file only if its size and SHA-256 match the note and `load()` compiles it. A note with the same version as the one known but another hash is ignored (logged once: "bump -- Version:"). Several notes for the same name, version and hash (different origins) are the same release.
+
+**Bad mark**: `{t = "bad", ids = {"name@version", ...}, reason, by, ts, sig}`, signed the same way. Releases with a bad id are not fetched, not installed, not served; a device running one rolls back to its `.bak`. A mark is dropped as soon as a newer good version of that file is known ("a newer version clears it").
+
+**Transfers**: one at a time per device (a list request or one file); a file comes in 16 KB chunks, each requested after the previous one arrived; no answer in 6 s: asked again (3 times), then another source. Interrupted transfers resume at the offset reached (in memory). Serving is rate-limited (burst 4, then one request every 0.5 s; up to 8 queued). Release notes and their sources come from `files_list` replies.
+
+**Origins**: the GitHub pull (update-role PC with HTTP; at boot, every `tminer.pull_minutes`, and on `pull_req`) signs every newer file that compiles. Manual edits: at boot and every 10 minutes each device checks its own files; one with a higher `-- Version:` than its release, that compiles, is signed and announced (a `beacon` / the next status). An edit without a version bump is kept locally, not released, logged once.
+
+**Applying** (all or nothing, `tmguard.lua`): only when every newer file the device wants is staged (`.tm_mesh/stage/`). Each changed file is backed up as `<file>.bak`, then replaced; every step is journalled in `.tm_mesh/applying`, so a reboot in the middle completes the same install at the next boot. Turtles: at home between trips (REFUELING, or IDLE/DONE/PAUSED at home), or at boot when at home; then one reboot (`.tm_updated` guard). Computers and pockets: no key/mouse/touch for 30 s and no command waiting for an ack, then one reboot. Relays: at once, one reboot. Files that never run (`files/`, `setup.lua`, `install.lua`) need no reboot.
+
+**Probation and rollback**: after an install that changed running programs, `.tm_mesh/probation` = `{ids, items, at, limit, boots}`. Computers: 5 minutes; turtles: until the first trip home or 10 minutes at home. During probation a crash of the program (startup runs it through `tmguard.run`) or a 4th boot (more than 2 extra reboots) restores the `.bak` files (deletes files that were new), writes `.tm_mesh/rollback` and reboots; the old version turns it into a signed bad mark with the reason (`"crash: <error>"`) and sends `bad`.
+
+**Legacy**: an update-role PC still answers the old `update_check` (→ `update_manifest`) and `file_get` without `sha` (→ `file` with the whole content) from `/files/`, so turtles with updater 1.x can upgrade once.
 
 Versions are read from the first line of each file: `-- Version: x.y.z`.
 
@@ -203,4 +228,5 @@ Versions are read from the first line of each file: `-- Version: x.y.z`.
 - Server marks a turtle `SILENT` after 60 s without any message, unless it announced `away` and is not overdue (then `AWAY`, no alert; overdue: `OVERDUE`).
 - Command ACK timeout: 3 s, retried 3 times by the server, then queued until the turtle is heard again (24 h max).
 - Contact window: 30 s. Server `fleet` every 5 s (cluster leader only).
+- Mesh updates: summaries ride on existing messages (relay/pocket beacon every 60 s); list/chunk request timeout 6 s, 3 tries; manual-edit check at boot and every 10 min; computers apply after 30 s idle; probation 5 min (turtles: first trip or 10 min at home).
 - Cluster: hello every 5 s, delta at once on queue/home changes else every 5 s, leader gone after 15 s silence (+2 s election), join window 3 s, role re-check every 60 s.

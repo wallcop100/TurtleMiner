@@ -1,4 +1,4 @@
--- Version: 1.4.3
+-- Version: 1.5.0
 -- One-shot downloader. Usage (in CC, needs the HTTP API enabled):
 --   wget run <BASE>/setup.lua server    -- any server PC: tminer_server + update files (/files/)
 --   wget run <BASE>/setup.lua monitor   -- server PC without update files (same program)
@@ -13,6 +13,8 @@
 -- Every server PC runs the same program (tminer_server); it finds its roles itself (UI with a
 -- monitor, radio gateway with a wireless/ender modem, cluster link with a wired modem, update
 -- server with /files/) and the PCs form one cluster with one leader.
+-- After setup, mesh updates keep every file below current (docs/MESH_UPDATE_PLAN.md); the
+-- lists here must match tmmesh.SETS (test scenario 61 checks).
 -- BASE = https://raw.githubusercontent.com/wallcop100/TurtleMiner/<branch>
 
 local BRANCH = "main"
@@ -20,12 +22,14 @@ local BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/" .. BRAN
 
 local MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "net.lua",
                 "miner.lua", "updater.lua", "install.lua", "startup.lua",
-                "tmcrypto.lua", "tmwords.lua", "tmjoin.lua" }
--- Mining network modules: every device gets them (from miner/).
-local NETMODS = { "tmcrypto.lua", "tmwords.lua", "tmjoin.lua" }
+                "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua" }
+-- Mining network + mesh update modules: every device gets them (from miner/).
+local NETMODS = { "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua", "updater.lua" }
 -- tminer_server and its modules (central_monitor = compatibility launcher for old startups)
 local SERVER = { "tminer_server.lua", "tm_db.lua", "tm_radio.lua", "tm_cluster.lua", "tm_ui.lua",
                  "tm_views.lua", "tm_update.lua", "tm_gps.lua", "tm_gpssolve.lua", "central_monitor.lua" }
+-- Relay programs (also kept in /files/ on an update server, so relays get updates)
+local RELAY = { "relay.lua", "relay_startup.lua" }
 
 local function get(src, dst)
     local h, err = http.get(BASE .. src)
@@ -142,6 +146,7 @@ if role == "server" or role == "monitor" or role == "pocket" then
     all({ { "servers/update_server/github_pull.lua", "github_pull.lua" } })
     if role == "server" then
         for _, f in ipairs(MINER) do all({ { "miner/" .. f, "files/" .. f } }) end
+        for _, f in ipairs(RELAY) do all({ { "servers/" .. f, "files/" .. f } }) end
     end
     -- One program, restarted on a crash; roles are detected at boot and every minute.
     all({ { "servers/startup.lua", "tminer_startup.lua" } })
@@ -151,13 +156,9 @@ if role == "server" or role == "monitor" or role == "pocket" then
     end
     writeStartup('shell.run("tminer_startup")\n', "tminer_server")
 elseif role == "relay" then
-    all({ { "servers/relay.lua", "relay.lua" } })
+    for _, f in ipairs(RELAY) do all({ { "servers/" .. f, f } }) end
     for _, f in ipairs(NETMODS) do all({ { "miner/" .. f, f } }) end
-    writeStartup('while true do\n'
-        .. '    local ok, err = pcall(shell.run, "relay")\n'
-        .. '    print("relay stopped: " .. tostring(err))\n'
-        .. '    sleep(5)\n'
-        .. 'end\n', "relay")
+    writeStartup('shell.run("relay_startup")\n', "relay")
 elseif role == "turtle" then
     for _, f in ipairs(MINER) do all({ { "miner/" .. f, f } }) end
 else

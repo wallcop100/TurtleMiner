@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- Test runner for the TurtleMiner simulator.
 --
 --   lua5.4 test/run.lua              run the sim self-test and every scenario
@@ -18,7 +18,7 @@ if testDir == "." then root = ".." end
 
 package.path = testDir .. "/sim/?.lua;" .. testDir .. "/lib/?.lua;" .. testDir .. "/?.lua;" .. package.path
 
-local HOST_TIMEOUT = tonumber(os.getenv("SIM_HOST_TIMEOUT") or "") or 300
+local HOST_TIMEOUT = tonumber(os.getenv("SIM_HOST_TIMEOUT") or "") or 600
 
 local function listScenarios()
     local names = { "selftest" }

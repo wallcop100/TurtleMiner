@@ -1,4 +1,4 @@
--- Version: 1.1.2
+-- Version: 1.2.1
 -- TurtleMiner server UI, part 1: drawing helpers, the turtle list and the turtle card, the
 -- render dispatch, keyboard / mouse / touch input and the UI loop. Any number of displays
 -- (monitors + the PC's own terminal, or a pocket). Keyboard first (docs/COMMS.md): arrow keys
@@ -297,8 +297,16 @@ local function renderList(ui)
     if pages > 1 then info = ui.page .. "/" .. pages .. " " .. info end
     local logW = (w - x + 1 >= 10) and 5 or 0
     local netW = (w - x + 1 >= 16) and 5 or 0
-    local used = (logW > 0 and logW + 1 or 0) + (netW > 0 and netW + 1 or 0)
+    local updW = (w - x + 1 >= 22) and 5 or 0
+    local used = (logW > 0 and logW + 1 or 0) + (netW > 0 and netW + 1 or 0) + (updW > 0 and updW + 1 or 0)
+    -- Mesh updates: a release rolled back somewhere, or this PC busy with an update.
+    local nBad = T.mesh and #T.mesh.badList() or 0
+    if nBad > 0 then info = "UPD! " .. info end
     put(ui, x, h, trunc(info, w - x + 1 - used), colors.white, colors.gray)
+    if updW > 0 then
+        button(ui, w - logW - netW - updW - 1, h, updW, "UPD", nBad > 0 and colors.orange or colors.blue,
+            function() ui.view = "updates"; ui.msg = nil end)
+    end
     if netW > 0 then
         button(ui, w - logW - netW, h, netW, "NET", joins > 0 and colors.orange or colors.blue,
             function() ui.view = "net"; ui.msg = nil end)
@@ -394,7 +402,7 @@ end
 function T.back(ui)
     if ui.view == "list" then return false end
     if ui.view == "gps" or ui.view == "cluster" then ui.view = "net"
-    elseif ui.view == "detail" or ui.view == "log" or ui.view == "net" then ui.view = "list"
+    elseif ui.view == "detail" or ui.view == "log" or ui.view == "net" or ui.view == "updates" then ui.view = "list"
     elseif ui.view == "netconfirm" or ui.view == "netcode" then ui.view = "net"
     else ui.view = "detail" end
     ui.msg = nil
@@ -519,6 +527,7 @@ function T.uiLoop()
         if e == "tminer_redraw" then
             T.renderAll()
         elseif e == "monitor_touch" or e == "mouse_click" then
+            S.lastInput = now()
             for _, ui in ipairs(S.uis) do
                 if (e == "monitor_touch" and ui.side == ev[2]) or (e == "mouse_click" and ui.side == nil) then
                     T.click(ui, ev[3], ev[4])
@@ -526,6 +535,7 @@ function T.uiLoop()
             end
             if e == "mouse_click" then T.followKeyboard() end
         elseif e == "char" or e == "key" then
+            S.lastInput = now()
             T.keyInput(e, ev[2])
         elseif e == "monitor_resize" or e == "term_resize" then
             T.renderAll()

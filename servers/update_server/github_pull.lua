@@ -1,4 +1,4 @@
--- Version: 1.3.2
+-- Version: 1.4.0
 -- Pulls newer TurtleMiner files from GitHub into the update server's folder
 -- (and the server's own programs). Used by update_server at boot and every
 -- tminer.pull_minutes (default 60, 0 = boot only).
@@ -10,6 +10,9 @@
 --
 -- A file is replaced only when GitHub has a strictly newer "-- Version:" first
 -- line and the new content compiles. Writes go to a .tmp file, then move.
+-- Mesh updates (tm_update.lua): M.fetchNewer(names, heldVersion, log) only downloads; the
+-- caller signs the new files as releases (tmmesh originate) and the mesh spreads them. The
+-- file lists come from tmmesh.SETS; M.MINER / M.SERVER below serve the legacy M.pull only.
 
 local M = {}
 
@@ -147,6 +150,34 @@ function M.pull(filesDir, log)
     local err = nil
     if failed > 0 then err = failed .. " file(s) could not be fetched" end
     return changed, serverChanged, err
+end
+
+-- Newer files on GitHub for these repo paths. heldVersion(name) -> "x.y.z" or nil.
+-- Returns list of {name, body, version}, err (string or nil).
+function M.fetchNewer(names, heldVersion, log)
+    log = log or print
+    if settings and settings.get("tminer.auto_pull") == false then return {}, "disabled" end
+    if not http then return {}, "HTTP API disabled" end
+    local base = (settings and settings.get("tminer.repo_base")) or M.DEFAULT_BASE
+    if base:sub(-1) ~= "/" then base = base .. "/" end
+    local out, failed = {}, 0
+    for _, name in ipairs(names) do
+        local body = fetch(base .. name)
+        local nv, nvs = versionOf(body)
+        if not body or not nv then
+            failed = failed + 1
+        else
+            local cv = versionOf("-- Version: " .. tostring(heldVersion(name) or "0.0.0"))
+            if not heldVersion(name) or newer(nv, cv) then
+                if load(body, "=" .. name, "t", {}) then
+                    out[#out + 1] = { name = name, body = body, version = nvs }
+                else
+                    log("pull: " .. name .. " v" .. nvs .. " does not compile, skipped")
+                end
+            end
+        end
+    end
+    return out, failed > 0 and (failed .. " file(s) could not be fetched") or nil
 end
 
 function M.interval()

@@ -1,4 +1,4 @@
--- Version: 1.3.1
+-- Version: 1.4.0
 -- TurtleMiner installer. The only program that asks questions.
 --
 --   install              join a mining network (first time), check hardware, fetch missing
@@ -13,7 +13,8 @@
 --   --approve                              ask a server UI to approve (NET screen, 2 minutes)
 --
 -- A fresh turtle only needs this file: tmcrypto/tmwords/tmjoin come from GitHub (HTTP) if
--- missing, the other miner files from the update server (rednet protocol "TMINER", signed).
+-- missing, the other miner files over the mesh (rednet protocol "TMINER", signed release
+-- notes: tmmesh.lua / updater.lua, docs/PROTOCOL.md "Mesh updates").
 
 -- Under `wget run`, require() would search the wget program's folder, not /.
 package.path = "/?.lua;/?;" .. package.path
@@ -37,8 +38,10 @@ end
 local REQUIRED = {
     "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua",
     "net.lua", "miner.lua", "updater.lua", "startup.lua",
-    "tmcrypto.lua", "tmwords.lua", "tmjoin.lua",
+    "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua",
 }
+-- Needed to fetch the rest over the mesh (GitHub first when HTTP works).
+local MESH_FILES = { "tmmesh.lua", "tmguard.lua", "updater.lua" }
 -- Files from the old miner. They are dead code now and an old startup could run them.
 local OLD_FILES = {
     "miner_core.lua", "miner_mining.lua", "miner_movement.lua", "miner_inventory.lua",
@@ -80,12 +83,15 @@ local function missingFiles()
 end
 
 -- ------------------------------------------------------------ bootstrap fetch
--- Minimal client for the update sub-protocol, only used to get updater.lua
--- itself; everything else goes through the updater.
+-- Minimal mesh client, only used to get tmmesh.lua / tmguard.lua / updater.lua themselves;
+-- everything else goes through the updater. Asks the update server for its release notes
+-- (`list_get` -> `files_list`), then fetches the file in 16 KB chunks (`file_get` ->
+-- `file_chunk`) and checks the note's signature, the SHA-256 and load().
 
 local signer = nil   -- this turtle's network signer (set once the network is known)
 
-local function fetchUpdater()
+local function fetchMesh(names)
+    local C = require("tmcrypto")
     local opened = {}
     for _, n in ipairs(peripheral.getNames()) do
         if peripheral.getType(n) == "modem" and not rednet.isOpen(n) then
@@ -112,28 +118,45 @@ local function fetchUpdater()
             end
         end
     end
-    local result, reason = false, "no update server"
-    send("update_check", "server", { role = "miner" })
-    local man = await("update_manifest", 3, function(m) return type(m.files) == "table" end)
-    if man then
-        reason = "server has no updater.lua"
-        for _, e in ipairs(man.files) do
-            if type(e) == "table" and e.name == "updater.lua" then
-                send("file_get", man.from, { name = "updater.lua" })
-                local f = await("file", 5, function(m) return m.from == man.from and m.name == "updater.lua" end)
-                if f and type(f.content) == "string" and load(f.content, "=updater.lua", "t", {}) then
-                    local h = fs.open("updater.lua", "w")
-                    h.write(f.content)
-                    h.close()
-                    result, reason = true, nil
-                else
-                    reason = "updater.lua download failed"
+    local got, reason = 0, "no update server"
+    send("list_get", "server", {})
+    local list = await("files_list", 4, function(m) return type(m.notes) == "table" end)
+    if list then
+        reason = nil
+        for _, name in ipairs(names) do
+            local note
+            for _, n in ipairs(list.notes) do
+                if type(n) == "table" and n.name == "miner/" .. name and type(n.sig) == "string" then
+                    local c = {}
+                    for k, v in pairs(n) do if k ~= "sig" then c[k] = v end end
+                    if signer.mac(c) == n.sig then note = n end
                 end
+            end
+            if note then
+                local parts, off = {}, 0
+                while off < note.size do
+                    send("file_get", list.from, { name = note.name, sha = note.sha256, off = off })
+                    local ch = await("file_chunk", 6, function(m) return m.name == note.name and m.off == off end)
+                    if not ch or type(ch.data) ~= "string" or #ch.data == 0 then break end
+                    parts[#parts + 1] = ch.data
+                    off = off + #ch.data
+                end
+                local body = table.concat(parts)
+                if #body == note.size and C.sha256hex(body) == note.sha256 and load(body, "=" .. name, "t", {}) then
+                    local h = fs.open(name, "w")
+                    h.write(body)
+                    h.close()
+                    got = got + 1
+                else
+                    reason = name .. " download failed"
+                end
+            else
+                reason = "server has no " .. name
             end
         end
     end
     for _, n in ipairs(opened) do pcall(rednet.close, n) end
-    return result, reason
+    return got, reason
 end
 
 -- One TMINER message to the servers (fire and forget). Returns true if a modem was open.
@@ -258,10 +281,14 @@ local missing = missingFiles()
 if #missing > 0 then
     print("  missing: " .. table.concat(missing, ", "))
     if modem then
-        if not fs.exists("updater.lua") then
-            print("  fetching updater.lua from the update server...")
-            local got, why = fetchUpdater()
-            if not got then warn(why) end
+        local need = {}
+        for _, name in ipairs(MESH_FILES) do
+            if not fs.exists(name) and not fetchHttp(name) then need[#need + 1] = name end
+        end
+        if #need > 0 then
+            print("  fetching " .. table.concat(need, ", ") .. " from the update server...")
+            local _, why = fetchMesh(need)
+            if why then warn(why) end
         end
     else
         warn("no modem, can't fetch them")

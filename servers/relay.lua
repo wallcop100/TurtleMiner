@@ -1,4 +1,4 @@
--- Version: 1.1.1
+-- Version: 1.2.0
 -- TurtleMiner relay (docs/COMMS.md rule 5). Run on any plain computer: opens every modem
 -- (ender, basic wireless, wired) and relays TMINER traffic between them, with dedupe and a
 -- hop limit. Nothing to configure:
@@ -9,6 +9,9 @@
 -- Mining network: relays only messages signed with this computer's network (.tm_network,
 -- tmcrypto.lua next to it; `setup network` makes one). Everything else is dropped and counted.
 -- The relayed copy is the original signed message; only hops/hop/via/mk change.
+-- Mesh updates (tmmesh.lua): a beacon every 60 s carries this relay's version summary; it
+-- fetches newer relay files from whoever has them, serves what it holds, installs at once
+-- (a relay is always idle) and restarts once. Startup: relay_startup.lua (crash guard).
 -- Usage: relay
 
 local PROTO       = "TMINER"
@@ -45,6 +48,12 @@ do
     if n then signer, netName = crypto.signer(n), n.name end
 end
 R.bad = 0
+
+local Mesh, mesh = nil, nil
+local seq = math.random(1, 1000000)
+local BOOT = now()
+local BEACON_MS = 60000
+local lastBeacon = 0
 
 local function markSeen(key, sig)
     if R.seen[key] then return false end
@@ -95,6 +104,70 @@ local function learn(sender, msg)
     end
 end
 
+-- Our own messages (beacons, mesh replies): signed, sent on every modem.
+local function send(kind, to, body)
+    if not signer then return end
+    seq = seq + 1
+    local msg = {}
+    for k, v in pairs(body or {}) do msg[k] = v end
+    msg.v, msg.kind, msg.from, msg.to = 1, kind, myId, to
+    msg.boot, msg.seq, msg.ts, msg.hops = BOOT, seq, now(), 0
+    local h, via = myHop()
+    msg.hop, msg.ohop, msg.via, msg.mk = h, h, via, R.kind
+    signer.sign(msg)
+    markSeen(msg.from .. ":" .. msg.boot .. ":" .. msg.seq, msg.sig)
+    pcall(rednet.broadcast, msg, PROTO)
+    return msg
+end
+
+local function relayVersion()
+    local v = mesh and mesh.heldVersion("servers/relay.lua")
+    return v or "?"
+end
+
+local function beacon()
+    if not mesh then return end
+    lastBeacon = now()
+    local body = { dev = "relay", ver = relayVersion(), label = os.getComputerLabel and os.getComputerLabel() or nil }
+    local okS, vs = pcall(mesh.summary)
+    if okS then body.vs = vs end
+    local okU, us = pcall(mesh.stateText)
+    if okU then body.us = us end
+    send("beacon", "all", body)
+end
+
+local function startMesh()
+    local ok, m = pcall(require, "tmmesh")
+    if not ok or type(m) ~= "table" then
+        local fn = loadfile("tmmesh.lua", nil, _ENV) or loadfile("/tmmesh.lua", nil, _ENV)
+        ok, m = pcall(fn or error)
+    end
+    if not ok or type(m) ~= "table" or not signer or not crypto then return end
+    Mesh = m
+    local n = crypto.loadNetwork()
+    local okE, e = pcall(function()
+        return m.new({ role = "relay", key = n.key, crypto = crypto, myId = myId, send = send,
+            log = function(text) R.last = "update: " .. tostring(text):sub(1, 60) end,
+            announce = beacon }).init()
+    end)
+    if okE then mesh = e end
+end
+
+local function meshTick()
+    if not mesh then return end
+    pcall(mesh.tick)
+    if now() - lastBeacon >= BEACON_MS then beacon() end
+    local okR, r = pcall(mesh.ready)
+    if okR and r then
+        local okA, applied, info = pcall(mesh.apply)
+        if okA and applied and info and info.reboot then
+            R.last = "update installed, restarting"
+            sleep(1)
+            os.reboot()
+        end
+    end
+end
+
 local function handle(sender, msg)
     if type(msg) ~= "table" or msg.v ~= 1 or type(msg.kind) ~= "string" then return end
     if type(msg.from) ~= "number" or msg.from == myId then return end
@@ -117,6 +190,10 @@ local function handle(sender, msg)
     markSeen(key, msg.sig)
     R.heard = R.heard + 1
     R.last = msg.kind .. " #" .. msg.from
+    if mesh then
+        if type(msg.vs) == "table" then pcall(mesh.heard, msg.from, msg.vs) end
+        if Mesh.KINDS[msg.kind] and (msg.to == myId or msg.to == "all") then pcall(mesh.handle, msg) end
+    end
     -- Sent by an ender modem: every wireless modem heard it; only a wired side still needs it.
     if hops >= MAX_HOPS or (msg.mk == "ender" and R.wired == 0) then
         R.skipped = R.skipped + 1
@@ -145,6 +222,7 @@ local function draw()
             "last " .. R.last,
             signer and ("network '" .. netName .. "'  foreign/bad msgs: " .. R.bad)
                 or "NO NETWORK: run `setup network`",
+            "relay v" .. relayVersion() .. (mesh and mesh.stateText() and ("  update: " .. mesh.stateText()) or ""),
         }
         if R.wireless + R.wired == 0 then lines[2] = "NO MODEM: attach one" end
         for i, l in ipairs(lines) do
@@ -155,6 +233,7 @@ local function draw()
 end
 
 openModems()
+startMesh()
 draw()
 local timer = os.startTimer(1)
 while true do
@@ -172,6 +251,7 @@ while true do
     elseif e == "peripheral" or e == "peripheral_detach" then
         openModems()
     elseif e == "timer" and ev[2] == timer then
+        meshTick()
         draw()
         timer = os.startTimer(1)
     end
