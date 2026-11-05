@@ -1,4 +1,4 @@
--- Version: 1.1.1
+-- Version: 1.1.2
 -- TurtleMiner mesh updates (docs/MESH_UPDATE_PLAN.md sections 2-3, docs/PROTOCOL.md "Mesh
 -- updates"). One module for every device: turtles (net.lua), server PCs and pockets
 -- (tminer_server), relays (relay.lua) and the updater CLI.

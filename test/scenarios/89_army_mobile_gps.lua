@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- Scenario 89 (AR-T / AR-G): mobile GPS. With no GPS hosts at all, a turtle sitting in an
 -- isolated pocket at depth pings and gets an exact fix from the replies of at least 4 working
 -- army turtles. Then four hosts that lie about their position are added and a real army turtle
@@ -11,34 +11,33 @@ return {
         local A = require("army")(sim, H)
         A.need({ "miner/gpsmobile.lua" })
         H.rawGps({})
-        local st = A.station({ y = 8, shaftTo = -2 })
+        local st = A.station({ y = 8, shaftTo = -17 })
         local ld, ui = A.leader(st), A.ui()
-        local rec = A.newArmy(st, ld, ui, { name = "gm", ores = { "lapis" } })
-        local ts = A.joinTurtles(st, ld, "gm", 6, { gps = true })
+        local rec = A.newArmy(st, ld, ui, { name = "gm", ores = { "lapis", "gold" } })
         local y0 = rec.levels[1].y
-        A.runUntil(st, function()
-            local n = 0
-            for _, t in ipairs(ts) do if t.pos.y <= y0 + 1 then n = n + 1 end end
-            return n >= 5
-        end, 4000, "5 turtles at depth")
-        -- an observer in a closed pocket near the shaft bottom (not in anybody's way)
+        -- an observer in a closed pocket near the shaft bottom (not in anybody's way); it pings
+        -- all the time, because the hosts are only spread over several heights (the solver wants
+        -- non-coplanar hosts) while turtles travel down the shaft
         local o = st.toWorld(1, 3, y0 - 2)
         st.w:set(o.x, o.y, o.z, "air")
         local obs = sim.turtle(st.w, { id = 77, pos = o, equip = A.BASIC, gps = false })
         local oc = H.netTurtle(obs, "Observer")
-        sim.run({ maxTime = 2 })
         local want = string.format("%d,%d,%d", o.x, o.y, o.z)
         local n0 = #sim.net.gpsAnswers
-        local fix
-        for _ = 1, 6 do
-            oc.jobs[#oc.jobs + 1] = function(net, G)
+        oc.jobs[#oc.jobs + 1] = function(net, G)
+            for _ = 1, 1500 do
                 local x, y, z = G.gps.locate(2)
-                return x and string.format("%d,%d,%d", x, y, z) or "none"
+                if x then return string.format("%d,%d,%d", x, y, z) end
             end
-            sim.run({ maxTime = 12 })
-            fix = oc.results[#oc.results]
-            if fix == want then break end
+            return "none"
         end
+        local ts = A.joinTurtles(st, ld, "gm", 6, { gps = true, settings = { HOME_Y = st.S.y } })
+        A.runUntil(st, function()
+            local n = 0
+            for _, t in ipairs(ts) do if t.pos.y <= y0 + 1 then n = n + 1 end end
+            return n >= 5 and oc.results[#oc.results] ~= nil
+        end, 4000, "5 turtles at depth and an observer fix")
+        local fix = oc.results[#oc.results]
         H.check(fix == want, "observer fix %s, want %s (gps answers heard: %d)", tostring(fix), want, #sim.net.gpsAnswers - n0)
         local from = {}
         for i = n0 + 1, #sim.net.gpsAnswers do from[sim.net.gpsAnswers[i].from] = true end
@@ -59,7 +58,7 @@ return {
         local before = sim.copyPos(victim.pos)
         sim.kill(victim)
         sim.boot(victim, { "miner" }, { background = true })
-        sim.run({ maxTime = 120 })
+        sim.run({ maxTime = 15 })
         local r = ld.rec(victim.id)
         local p = r and r.st and r.st.pos
         H.check(p, "restarted turtle sent no status")

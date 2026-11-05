@@ -1,4 +1,4 @@
--- Version: 1.6.1
+-- Version: 1.6.2
 -- One-shot downloader. Usage (in CC, needs the HTTP API enabled):
 --   wget run <BASE>/setup.lua server    -- any server PC: tminer_server + update files (/files/)
 --   wget run <BASE>/setup.lua monitor   -- server PC without update files (same program)

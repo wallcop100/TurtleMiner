@@ -1,4 +1,4 @@
--- Version: 1.5.1
+-- Version: 1.5.2
 -- Pulls newer TurtleMiner files from GitHub into the update server's folder
 -- (and the server's own programs). Used by update_server at boot and every
 -- tminer.pull_minutes (default 60, 0 = boot only).
