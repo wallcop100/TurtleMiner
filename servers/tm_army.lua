@@ -153,6 +153,14 @@ function A.segGrant(army, tid, keys, dir, now)
         local s = army.segs[key]
         if key:match("^s1:") and dir == "up" and army.shafts[2] and army.shafts[2].done then return false, "use_shaft2" end
         if key:match("^s2:") and dir == "down" then return false, "shaft2_up_only" end
+        local k = dir == "down" and key:match("^s(%d):")
+        if k then   -- a turtle out of contact comes up on its booked window without a lock: keep the shaft free
+            for _, sl in ipairs(army.slots) do
+                if sl.tid ~= tid and tostring(sl.shaft) == k and now > sl.at - sl.len and now < sl.at + sl.len then
+                    return false, "slot_window"
+                end
+            end
+        end
         if s and next(s.holders) then
             local others = 0
             for id in pairs(s.holders) do if id ~= tid then others = others + 1 end end

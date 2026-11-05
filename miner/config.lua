@@ -51,6 +51,9 @@ config.DEFAULTS = {
     MOBILE_GPS      = true,  -- answer other turtles' GPS pings between moves when position is known
     MODEM           = "auto",-- own modem kind, normally detected: "auto" | "basic" | "ender"
 
+    -- Army (docs/ARMY_PLAN.md): name of the army to join when standing at its station spot
+    GROUP           = "",
+
     -- Recovery
     SURFACE_IF_LOST = false, -- position lost after a crash: dig straight up (never protected
                              -- blocks) until 8 open cells in a row, unbreakable block, or fuel 50;

@@ -72,6 +72,7 @@ return function(sim, H)
         local f = io.open(REPO .. "/servers/tm_army.lua", "rb")
         if f then srv.c.fs:write("tm_army.lua", f:read("a")); f:close() end
         srv.boot()
+        sim.run({ maxTime = 30 })   -- cluster election: only the leader takes army messages
         st.leader = srv
         return srv
     end

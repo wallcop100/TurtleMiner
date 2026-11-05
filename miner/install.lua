@@ -26,17 +26,28 @@ local BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/main/"
 
 -- Network flags are parsed by tmjoin (loaded below); keep the rest here.
 local netArgs = {}
-for _, a in ipairs(args) do
-    if a == "--default" or a == "-d" then USE_DEFAULTS = true
+local ARMY = nil
+local skip = false
+for i, a in ipairs(args) do
+    if skip then skip = false
+    elseif a == "--army" then ARMY = args[i + 1]; skip = true
+    elseif a == "--default" or a == "-d" then USE_DEFAULTS = true
     elseif a == "--network" then NETWORK_ONLY = true
     elseif a == "--help" or a == "-h" then
-        print("Usage: install [--default] [--network] [--join <4 words> [--name n] | --create [name] | --disk | --approve]")
+        print("Usage: install [--default] [--network] [--army <name>] [--join <4 words> [--name n] | --create [name] | --disk | --approve]")
         return
     else netArgs[#netArgs + 1] = a end
 end
+if ARMY and ARMY ~= "" then
+    -- Join this army at boot: place the turtle on the station spot, facing the station direction.
+    settings.set("tminer.GROUP", ARMY)
+    settings.save()
+    print("Army '" .. ARMY .. "': the turtle joins it when started on the station spot.")
+end
+
 
 local REQUIRED = {
-    "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua",
+    "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "group.lua",
     "net.lua", "miner.lua", "updater.lua", "startup.lua",
     "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua", "gpsmobile.lua",
 }

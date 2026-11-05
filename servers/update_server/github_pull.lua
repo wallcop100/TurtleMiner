@@ -18,7 +18,7 @@ local M = {}
 
 M.DEFAULT_BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/main/"
 
-M.MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "net.lua",
+M.MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "group.lua", "net.lua",
             "miner.lua", "updater.lua", "install.lua", "startup.lua",
             "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "gpsmobile.lua" }
 

@@ -29,7 +29,14 @@ local nav    = require("nav")
 local inv    = require("inv")
 local mine   = require("mine")
 local net    = require("net")
+local okG, group = pcall(require, "group")
+if not okG then group = nil end
 
+local function noGroup() return false end
+if not group then
+    group = { active = noGroup, leaving = noGroup, wantJoin = function() return nil end, consumeLeft = noGroup,
+        init = function() end, status = function() return nil end, settings = function() return {} end }
+end
 local cfg = config.load()
 local st            -- state table, shared by reference with nav/inv/mine
 local booted = false
@@ -108,7 +115,7 @@ local function drawStatus()
             lines[3] = "fuel " .. tostring(fuel)
             lines[4] = ""
         end
-        lines[5] = string.rep("-", w - 18) .. " keys: R P B S H ?"
+        lines[5] = string.rep("-", w - 18) .. " keys: R P B S H J ?"
         if win.isColor and win.isColor() and colors then
             win.setTextColor(phase == "NEEDS_HELP" and colors.red or colors.yellow)
         end
@@ -196,6 +203,7 @@ local DEFAULT_MOVE_SEC = 1.5   -- s per move (dig + inspect + move) until a trip
 local MIN_TRIP_SEC     = 60
 
 local function remainingMoves()
+    if group.active() then return 4 * (tonumber(cfg.BRANCH_LENGTH) or 32) end
     local g = type(st.job) == "table" and type(st.job.geom) == "table" and st.job.geom or {}
     local bl = tonumber(g.bl) or cfg.BRANCH_LENGTH or 32
     local sp = tonumber(g.sp) or cfg.BRANCH_SPACING or 3
@@ -319,6 +327,7 @@ local function getStatus()
     s.job = { corridor = job.corridor, branch = job.branch, side = job.side, step = job.step }
     s.stats = { ores = st.stats.ores, blocks = st.stats.blocks, trips = st.stats.trips,
                 uptime = math.floor(os.clock()) }
+    s.army = group.status()
     s.lastError = st.lastError and string.sub(st.lastError, 1, 200) or nil
     return s
 end
@@ -391,6 +400,17 @@ local function doResetHome(params)
     net.event("info", "home reset to " .. st.home.x .. "," .. st.home.y .. "," .. st.home.z .. " facing " .. st.homeFacing)
 end
 
+local WAITING = { IDLE = true, DONE = true, PAUSED = true, NEEDS_HELP = true }
+
+-- Army to join at the next UNLOADING at the station spot ("" = none).
+local function setGroup(name)
+    cfg.GROUP = name
+    if settings and settings.set then
+        pcall(settings.set, "tminer.GROUP", name)
+        if settings.save then pcall(settings.save) end
+    end
+end
+
 local function applyCmd(c)
     local name, params = c.cmd, c.params or {}
     -- Visible trace on the turtle's screen, so "the command arrived but nothing happened"
@@ -437,6 +457,16 @@ local function applyCmd(c)
         st.flags.update = true
         save()
         net.event("info", "update queued (runs next time at home, then carries on)")
+    elseif name == "ARMY_JOIN" then
+        if type(params.name) == "string" and params.name ~= "" then
+            setGroup(params.name)
+            net.event("info", "will join army " .. params.name .. " at the station spot")
+            if WAITING[st.phase] then req.resume = true end
+        end
+    elseif name == "ARMY_LEAVE" then
+        setGroup("")
+        group.leave()
+        if WAITING[st.phase] then req.resume = true end
     elseif name == "REBOOT" then
         -- Commands are only applied between steps, so the turtle is not moving.
         save()
@@ -650,6 +680,22 @@ end
 
 H.UNLOADING = function()
     if not atHome() then return "RETURNING" end
+    local want = group.wantJoin()
+    if want then
+        local ok, why = group.join(want)
+        if not ok then
+            helpRetry = function() return "UNLOADING" end
+            return "NEEDS_HELP", "army join failed: " .. tostring(why)
+        end
+        homeScanned = false
+        sendHomeSave()
+    end
+    if group.consumeLeft() then
+        homeScanned = false
+        noRetreat, homeOrder = true, "xzy"
+        sendHomeSave()
+        if not atHome() then return "RETURNING", "left the army, back to the solo home" end
+    end
     if not homeScanned then
         local h = inv.scanHome()
         homeScanned = true
@@ -725,6 +771,36 @@ H.REFUELING = function()
     return "TO_WORK"
 end
 
+-- Army: claim -> mine the branch -> claim_done. Returns mine.run style results plus
+-- "wait" (reason = seconds), "next" (branch done, claim another), "home", "leave", "armyret".
+local function armyRun()
+    local s = group.settings()
+    if s.RETURN then
+        if atHome() then return "wait", 10 end
+        return "armyret", "army return"
+    end
+    local job, wait, silent = group.nextJob()
+    if not job then
+        if group.leaving() then return "leave", "leaving the army" end
+        if silent and not atHome() then return "home", "no answer from the army server" end
+        return "wait", wait or 5
+    end
+    if job.dig_shaft then
+        local res, why = mine.digShaft(group.deepest())
+        if res == "done" then group.shaftDone(); return "next" end
+        return res, why
+    end
+    if st.phase ~= "MINING" then setPhase("MINING", "branch " .. tostring(job.key)) end
+    local res, why = mine.runBranch(job)
+    if res == "done" then
+        group.jobDone(job, mine.armyResult())
+        if group.leaving() then return "leave", "leaving the army" end
+        if not net.inContact() then return "home", "branch done, out of contact" end
+        return "next"
+    end
+    return res, why
+end
+
 local function work()
     drain()
     if req.homeReset then req.homeReset = false; return "IDLE", "home reset" end
@@ -732,12 +808,17 @@ local function work()
         req.ret = false; st.flags.afterHome = "IDLE"
         return "RETURNING", "return command"
     end
-    local result, reason = mine.run()
+    local result, reason
+    if group.active() then result, reason = armyRun() else result, reason = mine.run() end
     if req.homeReset then req.homeReset = false; return "IDLE", "home reset" end
     if req.ret or result == "return" then
         req.ret = false; st.flags.afterHome = "IDLE"
         return "RETURNING", "return command"
     end
+    if result == "wait" then waitFor(tonumber(reason) or 5); return nil end
+    if result == "next" then return nil end
+    if result == "home" or result == "leave" then return "RETURNING", reason end
+    if result == "armyret" then st.flags.afterHome = "IDLE"; return "RETURNING", reason end
     if (result == "full" or result == "fuel") and atHome() then
         -- Nothing gained by another trip: unloading/refuelling didn't help.
         helpRetry = function() return "UNLOADING" end
@@ -864,6 +945,7 @@ local function initModules()
                    end })
     inv.init(st, cfg, nav)
     mine.init(st, cfg, nav, inv, ctl)
+    group.init(st, cfg, nav, inv, mine, net, ctl)
 end
 
 local function calibrateOrHelp()
@@ -1106,7 +1188,7 @@ net.setValidator(validateCmd)
 net.setGpsPos(function() return st and st.gps and type(st.pos) == "table" and st.pos or nil end)
 if net.mesh and net.mesh() then net.mesh().o.atHome = function() return st ~= nil and atHome() end end
 -- Keyboard controls on the turtle itself, so it can be run with no monitor or modem.
-local KEYHELP = "Keys: R resume  P pause  B return home  S status  H twice = this is home  N network to disk"
+local KEYHELP = "Keys: R resume  P pause  B return home  S status  H twice = this is home  N network to disk  J join army  L leave army"
 local function keyboard()
     local lastH = 0
     while true do
@@ -1136,6 +1218,11 @@ local function keyboard()
                 local okD, err = J.toDisk()
                 print(okD and "> network copied to the disk" or ("> " .. tostring(err)))
             end
+        elseif ch == "j" then
+            write("Army to join (at its station spot): ")
+            local n = read()
+            if n and n ~= "" then net.pushLocal("ARMY_JOIN", { name = n }); print("> ARMY_JOIN " .. n) end
+        elseif ch == "l" then net.pushLocal("ARMY_LEAVE"); print("> ARMY_LEAVE")
         elseif ch == "?" then print(KEYHELP)
         end
     end

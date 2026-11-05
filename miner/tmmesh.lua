@@ -46,7 +46,7 @@ local function join(a, b)
 end
 M.NET_MODS = NET
 M.SETS = {
-    miner = join({ "miner/config.lua", "miner/state.lua", "miner/nav.lua", "miner/inv.lua", "miner/mine.lua",
+    miner = join({ "miner/config.lua", "miner/state.lua", "miner/nav.lua", "miner/inv.lua", "miner/mine.lua", "miner/group.lua",
         "miner/net.lua", "miner/gpsmobile.lua", "miner/miner.lua", "miner/install.lua", "miner/startup.lua" }, NET),
     server = join({ "servers/tminer_server.lua", "servers/tm_db.lua", "servers/tm_radio.lua",
         "servers/tm_cluster.lua", "servers/tm_ui.lua", "servers/tm_views.lua", "servers/tm_update.lua", "servers/tm_gps.lua", "servers/tm_gpssolve.lua", "servers/tm_army.lua", "servers/tm_army_ui.lua",

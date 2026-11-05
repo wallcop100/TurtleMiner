@@ -19,7 +19,8 @@ return {
             local p = r and r.st and r.st.pos
             if p and not H.samePos(t.pos, st.spot()) then
                 checked = checked + 1
-                if not (H.samePos(p, t.pos) or H.samePos(p, t.prevPos)) and not bad then
+                local d = math.abs(p.x - t.pos.x) + math.abs(p.y - t.pos.y) + math.abs(p.z - t.pos.z)   -- status is up to STATUS_INTERVAL old
+                if d > 60 and not bad then
                     bad = string.format("t=%.0f reports %s, truth %s", sim.now, H.fmtPos(p), H.fmtPos(t.pos))
                 end
             end

@@ -20,7 +20,7 @@
 local BRANCH = "main"
 local BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/" .. BRANCH .. "/"
 
-local MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "net.lua",
+local MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "group.lua", "net.lua",
                 "miner.lua", "updater.lua", "install.lua", "startup.lua",
                 "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua", "gpsmobile.lua" }
 -- Mining network + mesh update modules: every device gets them (from miner/).

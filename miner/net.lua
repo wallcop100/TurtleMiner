@@ -35,7 +35,7 @@ local SERVER_KINDS = { fleet = true, cmd = true, home = true, update_manifest = 
 local KNOWN_CMDS = {
     RETURN_HOME = true, PAUSE = true, RESUME = true, SET = true,
     REQUEST_STATUS = true, RESET_JOB = true, RESET_HOME = true,
-    UPDATE = true, REBOOT = true,
+    UPDATE = true, REBOOT = true, ARMY_JOIN = true, ARMY_LEAVE = true,
 }
 
 local cfg         = { STATUS_INTERVAL = 10 }
@@ -48,6 +48,7 @@ local waiting     = {}     -- replyKind -> number of pending requests
 local replies     = {}     -- replyKind -> msg
 local statusWanted = false
 local statusDeferred = false   -- a status was skipped out of contact: send the newest on contact
+local kindHooks   = {}     -- kind -> fn(msg): unsolicited replies (army_cfg)
 local validator   = nil    -- optional fn(cmd, params) -> ok, err (used for the ack)
 
 local function now() return os.epoch("utc") end
@@ -508,6 +509,8 @@ local function handle(msg, sender)
         if not okM then net.stats.meshErr = tostring(err) end
         return
     end
+    local hk = kindHooks[msg.kind]
+    if hk then pcall(hk, msg) end
     if msg.kind == "cmd" then
         handleCmd(msg)
     elseif waiting[msg.kind] and waiting[msg.kind] > 0 then
@@ -607,6 +610,7 @@ function net.init(c)
 end
 
 function net.setValidator(fn) validator = fn end
+function net.onKind(kind, fn) kindHooks[kind] = fn end
 
 -- Safe from the worker coroutine while net.run runs in parallel: parallel
 -- hands every event to both coroutines, and handle() is deduped.

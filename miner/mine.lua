@@ -1,4 +1,4 @@
--- Version: 1.1.1
+-- Version: 1.2.0
 -- TurtleMiner mining pattern (WP-B).
 -- Grid in the home frame (F = homeFacing, R = homeFacing + 1), all at cfg.TARGET_Y:
 --   shaft  : home x/z, home y -> TARGET_Y
@@ -22,6 +22,12 @@ local seen = {}        -- cells inspected this run (no need to turn and look aga
 local oreSet, oreSrc = nil, nil
 local ready = false    -- mine.init called
 local veinFrom, veinPath = nil, nil   -- while in a vein: its start position and the path stack
+-- Army mode (miner/group.lua): grid in the station frame (home = station spot), see the army section at the end.
+local armyOn = false      -- member of an army: wait for unknown turtles, all ores wanted, no solo grid
+local aj = nil            -- current army branch {key,y,c,b,side,bl,sp,ml,near={}}
+local armyInfo = nil      -- {geom=, deepest=} from the army record (fuel estimates before a claim)
+local armyOres = {}       -- ore family -> count since the last claim_done
+local armyStart, armyRetreat, armyRouteLen   -- defined in the army section
 
 -- ------------------------------------------------------------------ helpers
 
@@ -119,6 +125,7 @@ mine.isProtected = isProtected
 -- corridor below MAX_CORRIDORS)? Such a cell is open already or will be dug (and its ore
 -- taken) by the step that enters it, so a scan never needs to turn to look at it.
 local function isTunnel(p)
+    if armyOn then return false end
     if p.y ~= targetY() then return false end
     local f, r = frame(p)
     local g = geom()
@@ -168,6 +175,7 @@ function mine.isOre(data)
 end
 
 local function wanted(family)
+    if armyOn then return true end   -- the level's focus only orders the work; any ore on the way is taken
     local f = cfg.FOCUS
     if f == nil or f == "" or f == "all" then return true end
     f = familyOf(f)   -- accept "iron_ore" / "raw_iron_block" as well as "iron"
@@ -191,10 +199,36 @@ local function moveDir(d, dig)
     return nav.forward(dig)
 end
 
+local function isTurtleBlock(data)
+    return type(data) == "table" and type(data.name) == "string" and data.name:find("^computercraft:turtle") ~= nil
+end
+
+-- Army: a turtle in front that did not get the cell from the coordinator. Never dig or attack it:
+-- wait until it is gone or STUCK_TIMEOUT passes. Returns true (cell free) or false, signal|text.
+local function waitTurtle(d)
+    local t0, limit = os.clock(), cfg.STUCK_TIMEOUT or 60
+    local p = neighbor(st.pos, d)
+    while true do
+        local c = ctlCheck()
+        if c then return false, c, true end
+        sleep(1)
+        local present, data = look(d)
+        if not (present and isTurtleBlock(data)) then return true end
+        if os.clock() - t0 >= limit then
+            return false, "blocked by unknown turtle at " .. p.x .. "," .. p.y .. "," .. p.z
+        end
+    end
+end
+
 -- Move in direction d, digging what is in the way, but never a protected block (chest,
 -- computer, ...): that fails with reason "protected" and a detail naming the block.
 local function safeMove(d)
     local present, data = look(d)
+    if armyOn and present and isTurtleBlock(data) then
+        local ok, why = waitTurtle(d)
+        if not ok then return false, "protected", why end
+        present, data = look(d)
+    end
     if present and isProtected(data) then
         local p = st.pos
         return false, "protected", "protected block " .. tostring(data.name) .. " next to "
@@ -256,6 +290,7 @@ function mine.vein(family, noRestore)
     st.phase = "VEIN"
     local startFacing = st.facing
     local checked = { [key(st.pos)] = true }
+    if armyOn and aj then for k in pairs(aj.near) do checked[k] = true end end   -- already dug by others
     local path = {}
     veinFrom, veinPath = { x = st.pos.x, y = st.pos.y, z = st.pos.z }, path
     local function done(...)
@@ -297,6 +332,10 @@ function mine.vein(family, noRestore)
                 path[#path + 1] = nextDir
                 dug[key(st.pos)] = true
                 count = count + 1
+                if armyOn then
+                    armyOres[family] = (armyOres[family] or 0) + 1
+                    if ctl and ctl.dig then pcall(ctl.dig, st.pos) end
+                end
                 s.ores = s.ores + 1
                 s.blocks = s.blocks + 1
             elseif reason == "abort" then
@@ -333,6 +372,7 @@ local function takeOre(d, family)
         return sig, why
     end
     if digDir(d) then
+        if armyOn then armyOres[family] = (armyOres[family] or 0) + 1 end
         local s = stats()
         s.ores = s.ores + 1
         s.blocks = s.blocks + 1
@@ -395,6 +435,14 @@ local function step(d)
     if sig then return sig, why end
     local present, data = look(d)
     local counted = false
+    if armyOn and present and isTurtleBlock(data) then
+        local ok, why, isSig = waitTurtle(d)
+        if not ok then
+            if isSig then return why, "command" end
+            return "stuck", why
+        end
+        present, data = look(d)
+    end
     if present then
         if isProtected(data) then
             local p = st.pos
@@ -486,6 +534,7 @@ local function sideDir(side)
 end
 
 function mine.jobStart(job)
+    if armyOn and armyStart then return armyStart() end
     job = job or st.job
     local T = targetY()
     local rc = job.corridor * width()
@@ -589,6 +638,7 @@ end
 -- "timeout", ...) or "stuck" when a protected block (chest, computer, ...) is in the way;
 -- detail then names the block and where. Protected blocks are never dug.
 function mine.retreat()
+    if armyOn and armyRetreat then return armyRetreat() end
     if type(st.job) == "table" then geom() else ensureJob() end
     local f, r = frame(st.pos)
     if f == 0 and r == 0 then return true end
@@ -618,6 +668,7 @@ function mine.routeHomeLength(p)
         return nil
     end
     if st.lost or type(st.job) ~= "table" or type(cfg) ~= "table" then return nil end
+    if armyOn and armyRouteLen then return armyRouteLen(p) end
     geom()
     local extra = 0
     if not p then
@@ -681,6 +732,306 @@ function mine.isKnownOpen(p)
     if bi > b then return false end
     if off < 0 then return sideR or dist <= s end     -- side L (-R) is walked first
     return sideR and dist <= s
+end
+
+-- ------------------------------------------------------------------ army mode
+-- Station frame (docs/ARMY_PLAN.md): home = station spot S, F = homeFacing. Shaft 1 is the column (f=1, r=0),
+-- shaft 2 (f=1, r=1); the level's spine runs along R at f=2; corridor c has its main at r=c*W (f=2..1+ml);
+-- branch b of side L/R sits at f=2+(b+1)*sp. Shared lanes are acquired through ctl.lane(segs, dir) /
+-- ctl.unlane(segs) (miner/group.lua); outbound trips are "down", return trips "up". Without those hooks
+-- (or without an army) none of this runs.
+
+local held = {}   -- segment keys currently granted to us
+
+local function lane(segs, dir)
+    if #segs == 0 then return true end
+    if not (ctl and ctl.lane) then return true end
+    local ok, why = ctl.lane(segs, dir)
+    if ok then for _, k in ipairs(segs) do held[k] = true end end
+    return ok, why
+end
+
+local function unlane(segs)
+    if not (ctl and ctl.unlane) then return end
+    local out = {}
+    for _, k in ipairs(segs) do if held[k] then held[k] = nil; out[#out + 1] = k end end
+    if #out > 0 then pcall(ctl.unlane, out) end
+end
+
+local function unlaneAll()
+    local out = {}
+    for k in pairs(held) do out[#out + 1] = k end
+    unlane(out)
+end
+
+local function cat(...)
+    local out = {}
+    for _, l in ipairs({ ... }) do for _, v in ipairs(l) do out[#out + 1] = v end end
+    return out
+end
+
+local function seg16(v) return math.floor(v / 16) end
+local function shaftSegs(k, y)
+    local out = {}
+    for i = 0, seg16(st.home.y - 1 - y) do out[#out + 1] = "s" .. k .. ":" .. i end
+    return out
+end
+local function spineSegs(T, r1, r2)
+    local out = {}
+    for j = seg16(math.min(r1, r2)), seg16(math.max(r1, r2)) do out[#out + 1] = "sp" .. T .. ":" .. j end
+    return out
+end
+local function mainSegs(T, c, f)
+    local out = {}
+    for i = 0, seg16(f - 2) do out[#out + 1] = "m" .. T .. ":" .. c .. ":" .. i end
+    return out
+end
+
+local function aGeom() return aj or (armyInfo and armyInfo.geom) or { bl = 32, sp = 3, ml = 64 } end
+local function aW() local g = aGeom(); return 2 * g.bl + g.sp end
+local function aNearest(r) local w = aW(); return math.floor(r / w + 0.5) * w end
+local function aBF() return 2 + (aj.b + 1) * aj.sp end
+local function aRC() return aj.c * aW() end
+
+-- reason from a failed lane request -> signal
+local function laneSig(why)
+    if why == "stop" then return "stop", "command" end
+    return "return", "command"
+end
+
+-- Walk legs {axis, target, rel={segs}, after=fn}, with ore checks (lineTo).
+local function walk(legs)
+    for _, leg in ipairs(legs) do
+        local sig, why = lineTo(leg[1], leg[2])
+        if sig then unlaneAll(); return sig, why end
+        if leg.rel then unlane(leg.rel) end
+        if leg.after then leg.after() end
+    end
+    return nil
+end
+
+function mine.armyMode(on)
+    armyOn = on and true or false
+    if not armyOn then aj = nil; held = {} end
+end
+
+function mine.armyInfo(info) armyInfo = info end
+
+-- Set (or clear) the current claim: {key, geom={bl,sp,ml}, near={"x,y,z",...}}
+function mine.armyJob(job)
+    if not job then aj = nil; return end
+    local y, c, b, side = tostring(job.key):match("^(%-?%d+):(%-?%d+):(%d+):([LR])$")
+    if not y then aj = nil; return end
+    local g = job.geom or {}
+    aj = { key = job.key, y = tonumber(y), c = tonumber(c), b = tonumber(b), side = side,
+        bl = g.bl, sp = g.sp, ml = g.ml, near = {} }
+    for _, k in ipairs(job.near or {}) do aj.near[k] = true end
+end
+
+function mine.armyResult()
+    local o = armyOres
+    armyOres = {}
+    return { ores = o }
+end
+
+armyStart = function()
+    local T, f, r
+    if aj then T, f, r = aj.y, aBF(), aRC()
+    else
+        T = armyInfo and armyInfo.deepest or (st.home.y - 30)
+        f, r = 2, 0
+    end
+    return mine.toWorld(f, r, T), FD()
+end
+
+armyRouteLen = function(p)
+    local extra = 0
+    if not p then
+        p = st.pos
+        if veinFrom and veinPath then extra, p = #veinPath, veinFrom end
+    end
+    local f, r = frame(p)
+    local h = st.home
+    local n
+    if f <= 1 then
+        n = math.abs(p.y - h.y) + 2
+    else
+        local m = aNearest(r)
+        n = (h.y - p.y) + math.abs(f - 2) + math.abs(r - m) + math.abs(m) + 3
+    end
+    local manhattan = math.abs(p.x - h.x) + math.abs(p.y - h.y) + math.abs(p.z - h.z)
+    return math.max(n, manhattan) + extra
+end
+
+-- Out: station spot / shaft -> start of the claimed branch, under "down" lanes.
+local function aOut()
+    local T, fb, rc = aj.y, aBF(), aRC()
+    local f, r = frame(st.pos)
+    local _, sign = sideDir(aj.side)
+    if st.pos.y == T and f == fb and (r - rc) * sign >= 0 and math.abs(r - rc) <= aj.bl then return nil end
+    if st.pos.y > T then
+        local shaft, spine, main = shaftSegs(1, T), spineSegs(T, 0, rc), mainSegs(T, aj.c, fb)
+        local ok, why = lane(cat(shaft, spine, main), "down")
+        if not ok then return laneSig(why) end
+        aj.mainSegs = main
+        local legs = {}
+        if f == 0 then
+            legs[#legs + 1] = { "f", 1, after = function() if ctl and ctl.unstation then pcall(ctl.unstation) end end }
+        end
+        legs[#legs + 1] = { "y", T }
+        legs[#legs + 1] = { "f", 2, rel = shaft }
+        legs[#legs + 1] = { "r", rc }
+        legs[#legs + 1] = { "f", fb, rel = spine }
+        return walk(legs)
+    end
+    -- already at the level (resumed in the grid): same route logic as solo, spine row f=2
+    local m = aNearest(r)
+    local sig, why
+    if f ~= 2 and m ~= r then
+        sig, why = lineTo("r", m)
+        if sig then return sig, why end
+        r = m
+    end
+    if r ~= rc then
+        sig, why = lineTo("f", 2)
+        if sig then return sig, why end
+        sig, why = lineTo("r", rc)
+        if sig then return sig, why end
+    end
+    return lineTo("f", fb)
+end
+
+function mine.runBranch(job)
+    mine.armyJob(job)
+    if not aj then return "stuck", "bad claim key " .. tostring(job and job.key) end
+    local sig, why = aOut()
+    if sig then return sig, why end
+    local rc = aRC()
+    local _, sign = sideDir(aj.side)
+    local first = true
+    sig, why = lineTo("r", rc + sign * aj.bl, function()
+        if first then first = false; if aj.mainSegs then unlane(aj.mainSegs) end end
+        local _, r2 = frame(st.pos)
+        if type(st.army) == "table" then st.army.step = math.abs(r2 - rc) end
+    end)
+    if sig then return sig, why end
+    unlane(aj.mainSegs or {})
+    return "done", aj.key
+end
+
+-- Dig the second shaft (column f=1, r=1) from the station down to `deepest`, climb back to the spot.
+function mine.digShaft(deepest)
+    local f = frame(st.pos)
+    local sig, why
+    if st.pos.y == st.home.y then
+        if f == 0 then sig, why = lineTo("f", 1); if sig then return sig, why end end
+        sig, why = lineTo("r", 1)
+        if sig then return sig, why end
+    end
+    sig, why = lineTo("y", deepest)
+    if sig then return sig, why end
+    local ok, reason, detail = rawLine("y", st.home.y)
+    if ok then ok, reason, detail = rawLine("r", 0) end
+    if ok then ok, reason, detail = rawLine("f", 0) end
+    if not ok then return "stuck", tostring(detail or reason) end
+    return "done"
+end
+
+-- Return: branch/main/spine/shaft back to the station spot under "up" lanes (shaft 2 once it exists).
+-- Returns true | false, reason, detail (like the solo retreat).
+armyRetreat = function()
+    local H0 = st.home.y
+    local f, r = frame(st.pos)
+    local function raw(axis, target)
+        local ok, reason, detail = rawLine(axis, target)
+        if not ok then
+            if reason == "protected" then return false, "stuck", detail end
+            return false, reason, detail
+        end
+        return true
+    end
+    local function station() if ctl and ctl.station then return ctl.station() end end
+    local function laneFail(why)
+        unlaneAll()
+        return false, "stuck", "lane: " .. tostring(why)
+    end
+    if st.pos.y >= H0 then
+        for _, leg in ipairs({ { "r", 0 }, { "f", 0 } }) do
+            local ok, a, b = raw(leg[1], leg[2]); if not ok then return false, a, b end
+        end
+        return true
+    end
+    local legs, shaftSeg, spine, main = {}, {}, {}, {}
+    local k = (type(st.army) == "table" and st.army.shaft2) and 2 or 1
+    local T = st.pos.y
+    if f > 1 then
+        if aj and T ~= aj.y then
+            local ok, a, b = raw("y", aj.y); if not ok then return false, a, b end
+            T = aj.y
+        end
+        local m = aNearest(r)
+        if f > 2 and r ~= m and math.abs(r - m) > 1 then
+            local nr = m + (r > m and 1 or -1)
+            local ok, a, b = raw("r", nr); if not ok then return false, a, b end
+            r = nr
+        end
+        local c = m / aW()
+        local got = false
+        for attempt = 1, 2 do
+            local r0 = (k == 2) and 1 or 0
+            shaftSeg = shaftSegs(k, T)
+            spine = spineSegs(T, f > 2 and m or r, r0)
+            main = f > 2 and mainSegs(T, c, f) or {}
+            station()
+            local ok, why = lane(cat(shaftSeg, spine, main), "up")
+            if ok then got = true; break end
+            if why == "use_shaft2" and attempt == 1 then
+                k = 2
+                if type(st.army) == "table" then st.army.shaft2 = true end
+            else
+                return laneFail(why)
+            end
+        end
+        if not got then return laneFail("denied") end
+        local r0 = (k == 2) and 1 or 0
+        legs = { { "r", f > 2 and m or r }, { "f", 2 }, { "r", r0, rel = main }, { "f", 1, rel = spine },
+            { "y", H0 }, { "aside" }, { "r", 0 }, { "f", 0, rel = shaftSeg } }
+    else
+        -- inside a shaft column
+        local kk = (r == 1) and 2 or 1
+        shaftSeg = shaftSegs(kk, T)
+        station()
+        local ok, why = lane(shaftSeg, "up")
+        if not ok then return laneFail(why) end
+        legs = { { "y", H0 }, { "aside" }, { "r", 0 }, { "f", 0, rel = shaftSeg } }
+    end
+    for _, leg in ipairs(legs) do
+        if leg[1] == "aside" then
+            -- top of the shaft: wait for the station spot standing in (1,1), not in the way of whoever leaves
+            local waited = 0
+            while true do
+                if ctl and ctl.stationAside then ctl.stationAside(function() rawLine("r", 1) end) end
+                local _, rr = frame(st.pos)
+                if rr ~= 0 then
+                    local ok = rawLine("r", 0)
+                    if not ok then break end
+                end
+                -- is a turtle standing on the station spot (not in the queue, e.g. it came up on its slot)?
+                local present, data = look((FD() + 2) % 4)
+                if not (present and isTurtleBlock(data)) then break end
+                rawLine("r", 1)
+                waited = waited + 3
+                sleep(3)
+                if ctlCheck() == "stop" or waited > 600 then break end
+            end
+        else
+            local ok, a, b = raw(leg[1], leg[2])
+            if not ok then unlaneAll(); return false, a, b end
+            if leg.rel then unlane(leg.rel) end
+        end
+    end
+    unlaneAll()
+    return true
 end
 
 return mine
