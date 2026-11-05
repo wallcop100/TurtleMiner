@@ -1,4 +1,4 @@
--- Version: 1.1.1
+-- Version: 1.1.2
 -- TurtleMiner server UI, part 1: drawing helpers, the turtle list and the turtle card, the
 -- render dispatch, keyboard / mouse / touch input and the UI loop. Any number of displays
 -- (monitors + the PC's own terminal, or a pocket). Keyboard first (docs/COMMS.md): arrow keys
@@ -290,6 +290,10 @@ local function renderList(ui)
     if not S.signer then info = "NO NETWORK " .. info end
     if joins > 0 then info = "JOIN? " .. info end
     if (S.bad or 0) > 0 then info = info .. " bad:" .. S.bad end
+    if S.mode == "server" and T.gps and T.gps.status then
+        local okG, g = pcall(T.gps.status)
+        if okG and g then info = info .. " " .. g end
+    end
     if pages > 1 then info = ui.page .. "/" .. pages .. " " .. info end
     local logW = (w - x + 1 >= 10) and 5 or 0
     local netW = (w - x + 1 >= 16) and 5 or 0
