@@ -485,6 +485,7 @@ function T.handleMessage(sender, msg, protocol)
         if (k == "update_check" or k == "file_get") and T.updateMessage then T.updateMessage(msg) end
         if k == "cmd_relay" then onCmdRelay(msg); T.markDirty(); return end
         if not leader then return end
+        if T.armyKinds and T.armyKinds[k] then T.army.handle(msg); T.markDirty(); return end
         -- Any message from a turtle: it is reachable now, deliver its queued commands.
         if TURTLE_KINDS[k] then
             local r = T.getRec(msg.from, false)

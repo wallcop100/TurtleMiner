@@ -27,7 +27,7 @@ local MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "ne
 local NETMODS = { "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua", "updater.lua" }
 -- tminer_server and its modules (central_monitor = compatibility launcher for old startups)
 local SERVER = { "tminer_server.lua", "tm_db.lua", "tm_radio.lua", "tm_cluster.lua", "tm_ui.lua",
-                 "tm_views.lua", "tm_update.lua", "tm_gps.lua", "tm_gpssolve.lua", "central_monitor.lua" }
+                 "tm_views.lua", "tm_update.lua", "tm_gps.lua", "tm_gpssolve.lua", "tm_army.lua", "central_monitor.lua" }
 -- Relay programs (also kept in /files/ on an update server, so relays get updates)
 local RELAY = { "relay.lua", "relay_startup.lua" }
 

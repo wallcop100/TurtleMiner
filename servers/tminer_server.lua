@@ -56,6 +56,7 @@ end
 for _, m in ipairs({ "tm_db", "tm_radio", "tm_cluster", "tm_ui", "tm_views", "tm_update" }) do loadModule(m) end
 -- GPS (CG-3): the optional tm_gps.lua sets T.gps = {wanted(), loop()} and loads tm_gpssolve.lua itself.
 loadModule("tm_gps", true)
+loadModule("tm_army", true)   -- army coordinator (leader only)
 
 local S = T.S
 local TICK = 0.5

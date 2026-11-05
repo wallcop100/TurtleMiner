@@ -811,7 +811,7 @@ end
 -- opts: id (100), pos, modemKind ("basic"), modems (list, overrides modemKind).
 -- Returns srv = {c, M (central_monitor module), rec(id), log()}; M runs in the computer.
 H.SERVER_FILES = { "tminer_server.lua", "central_monitor.lua", "tm_db.lua", "tm_radio.lua", "tm_cluster.lua",
-    "tm_ui.lua", "tm_views.lua", "tm_update.lua", "tm_gps.lua", "tm_gpssolve.lua" }
+    "tm_ui.lua", "tm_views.lua", "tm_update.lua", "tm_gps.lua", "tm_gpssolve.lua", "tm_army.lua" }
 -- Shared with the turtles (setup.lua installs them on every computer from miner/).
 H.SHARED_FILES = { "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua", "updater.lua" }
 

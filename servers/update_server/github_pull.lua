@@ -39,6 +39,7 @@ M.SERVER = {
     { "servers/tm_update.lua", "tm_update.lua", NEEDS_SERVER },
     { "servers/tm_gps.lua", "tm_gps.lua", NEEDS_SERVER },
     { "servers/tm_gpssolve.lua", "tm_gpssolve.lua", NEEDS_SERVER },
+    { "servers/tm_army.lua", "tm_army.lua", NEEDS_SERVER },
     { "servers/tminer_server.lua", "tminer_server.lua", NEEDS_SERVER },
     { "servers/central_monitor.lua", "central_monitor.lua" },
     { "servers/update_server/update_server.lua", "update_server.lua" },
