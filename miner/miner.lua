@@ -1,4 +1,4 @@
--- Version: 1.4.2
+-- Version: 1.4.3
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
@@ -682,15 +682,30 @@ H.REFUELING = function()
     if trip > target then target = trip end
     inv.restockFuel(target)
     if nxt ~= "TO_WORK" then return nxt, why end
-    if short() then inv.refuel(trip) end
+    -- At home and still short: burn whatever fuel we carry, reserve included
+    -- (the reserve is for getting home, and we are home).
+    if short() then inv.refuel(trip, { emergency = true }) end
+    local function reason()
+        local carried = 0
+        for i = 1, 16 do
+            local d = turtle.getItemDetail(i)
+            if d and inv.fuelValue(d.name) then carried = carried + d.count end
+        end
+        return "out of fuel (have " .. fuelLevel() .. ", need " .. need
+            .. (homeOverhead > 0 and (" incl. " .. homeOverhead .. " used at home since boot") or "")
+            .. "; carrying " .. carried .. " fuel items"
+            .. (inv.home and inv.home.fuel and "" or "; no fuel chest found") .. ")"
+    end
     if short() then
         helpRetry = function()
             inv.restockFuel(target)
-            if short() then inv.refuel(trip) end
+            if short() then inv.refuel(trip, { emergency = true }) end
             if not short() then return "REFUELING" end
+            -- Keep the reason current so the monitor shows the real level.
+            local r = reason()
+            if st.reason ~= r then st.reason = r; net.statusNow() end
         end
-        return "NEEDS_HELP", "out of fuel (have " .. fuelLevel() .. ", need " .. need
-            .. (homeOverhead > 0 and (" incl. " .. homeOverhead .. " used at home since boot") or "") .. ")"
+        return "NEEDS_HELP", reason()
     end
     homeOverhead = 0
     return "TO_WORK"

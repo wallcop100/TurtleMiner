@@ -1,4 +1,4 @@
--- Version: 1.0.2
+-- Version: 1.0.3
 -- TurtleMiner inventory and fuel (WP-B).
 -- Refuel with a reserve, trash dropping, home storage detection, unload, fuel restock.
 -- Never prompts. Every turn it makes is undone before returning.
@@ -168,13 +168,14 @@ function inv.refuel(target, opts)
     local limit = fuelLimit()
     if limit and target > limit then target = limit end
     if fuel >= target then return fuel end
+    local start = fuel
     local keep = (opts and opts.emergency) and 0 or (cfg.FUEL_KEEP or 0)
     local spare = fuelItemCount() - keep
     for slot = 1, 16 do
-        if fuel >= target or spare <= 0 then break end
+        if fuel >= target then break end
         local d = turtle.getItemDetail(slot)
         local v = d and fuelValue(d.name)
-        if v then
+        if v and spare > 0 then
             local n = math.ceil((target - fuel) / v)
             if n > d.count then n = d.count end
             if n > spare then n = spare end
@@ -187,9 +188,28 @@ function inv.refuel(target, opts)
                 ok, fuel = burn(slot, n)
                 if ok then spare = spare - n end
             end
+        elseif d and not v then
+            -- Not a fuel we know by name (lava bucket, modded fuel, planks...): ask the
+            -- turtle, burn one to learn its value, then as many as needed.
+            turtle.select(slot)
+            if turtle.refuel(0) then
+                local before = fuel
+                local ok
+                ok, fuel = burn(slot, 1)
+                local per = fuel - before
+                if ok and per > 0 and fuel < target then
+                    local left = turtle.getItemCount(slot)
+                    local n = math.min(left, math.ceil((target - fuel) / per))
+                    if limit then n = math.min(n, math.floor((limit - fuel) / per)) end
+                    if n > 0 then ok, fuel = burn(slot, n) end
+                end
+            end
         end
     end
     turtle.select(1)
+    if fuel > start and print then
+        pcall(print, ("refuel: %d -> %d"):format(start, fuel))
+    end
     return fuel
 end
 
