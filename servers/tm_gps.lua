@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- TurtleMiner GPS constellation from the server PCs (docs/CLUSTER_GPS_PLAN.md section 3).
 -- Offered, never required. The cluster leader counts the PCs with a wireless or ender modem;
 -- with >= 4 and a good layout (measured, not coplanar, >= 6 blocks apart) it offers
@@ -639,6 +639,33 @@ local function rangeAt(y)
     if y <= 96 then return 64 end
     return math.min(384, 64 + (y - 96) / 224 * 320)
 end
+-- One short status for footers and the NET page: always shown, so you can tell
+-- whether GPS is off for lack of PCs, waiting for you, being set up, or running.
+function G.status()
+    local t = now()
+    local n = #eligible(t)
+    local hosts = 0
+    for _ in pairs(V.hosts or {}) do hosts = hosts + 1 end
+    if V.st == "on" then return "GPS on " .. hosts .. "h", hosts >= 4 end
+    if V.st == "offer" then return "GPS? " .. (V.n or n) .. "pc", true end
+    if V.st == "asking" then return "GPS F3?", true end
+    if V.st == "setup" then return "GPS setup", true end
+    if V.never then return "GPS never", false end
+    if n < 4 then return "GPS " .. n .. "/4pc", false end
+    return "GPS layout?", false   -- enough PCs, but too flat/close (see V.note)
+end
+function G.statusLong()
+    local short = G.status()
+    local n = #eligible(now())
+    local lines = { short }
+    if V.st ~= "on" and n < 4 then
+        lines[#lines + 1] = n .. " PC(s) with a wireless/ender modem in this cluster; GPS needs 4,"
+        lines[#lines + 1] = "spread out and not all at one height."
+    end
+    if V.note then lines[#lines + 1] = tostring(V.note) end
+    return lines
+end
+
 function G.coverage()
     local r, ys = {}, {}
     for id, h in pairs(V.hosts) do
@@ -750,7 +777,12 @@ local function renderGps(ui)
     elseif st == "on" then add("ON: " .. #hostIds() .. " hosts", colors.lime)
     elseif st == "offer" then add("Possible with " .. tostring(V.n) .. " PCs", colors.yellow)
     elseif st == "asking" or st == "setup" then add("Setting up...", colors.yellow)
-    else add("Not running" .. (V.later and " (later)" or ""), colors.lightGray) end
+    else
+        add("Not running" .. (V.later and " (later)" or ""), colors.lightGray)
+        local n = #eligible(now())
+        add(n .. " PC(s) with a wireless/ender modem here; needs 4,", n >= 4 and colors.white or colors.orange)
+        add("spread out, not all at one height.", colors.lightGray)
+    end
     if V.note then add(V.note, colors.orange) end
     local cov, ys = G.coverage()
     if cov then add("Reach: " .. cov); add("Host heights: Y " .. ys) end
