@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.1.1
 -- TurtleMiner mining pattern (WP-B).
 -- Grid in the home frame (F = homeFacing, R = homeFacing + 1), all at cfg.TARGET_Y:
 --   shaft  : home x/z, home y -> TARGET_Y
@@ -229,13 +229,14 @@ local function fail(reason)
     return "stuck", tostring(reason) .. " at " .. p.x .. "," .. p.y .. "," .. p.z
 end
 
+-- Low on fuel: burn what we carry before giving up and heading home
+-- (BURN_COAL only decides whether to top up all the way to FUEL_TARGET).
 local function fuelGood()
     if inv.fuelOk(st) then return true end
-    if cfg.BURN_COAL then
-        inv.refuel(math.max(cfg.FUEL_TARGET or 0, inv.fuelNeeded(st) + 1))
-        return inv.fuelOk(st)
-    end
-    return false
+    local want = inv.fuelNeeded(st) + 1
+    if cfg.BURN_COAL then want = math.max(cfg.FUEL_TARGET or 0, want) end
+    inv.refuel(want)
+    return inv.fuelOk(st)
 end
 
 local function roomGood()
