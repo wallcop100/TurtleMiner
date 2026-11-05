@@ -248,3 +248,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-05 | coordinator | Army batch 0 done: contracts (frame, keys, record, messages, group.lua API, presets) in ARMY_PLAN.md; approved decisions replace the old 'How it works'. Mesh updates merged locally, suite running. |
 | 2026-11-05 | coordinator | GPS turtles underground: not added (user: only if they can live-report; with basic modems at depth they can't reach the server). |
 | 2026-11-05 | coordinator | GPS turtles underground added back as optional: offered only when 4 army turtles can report live from depth (ender modems or a relay/hub reaching them). |
+| 2026-11-05 | coordinator | Replaced 'parked GPS turtles' with mobile GPS: army turtles answer GPS pings with their current certain world position between moves; fixes cross-checked against the journal. |

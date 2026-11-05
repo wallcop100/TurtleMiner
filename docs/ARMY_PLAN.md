@@ -70,12 +70,16 @@ Basic modems reach 64 blocks, so with no ender modem turtles only talk to the ma
 - **Each level has its own ore focus:** a level made from the diamond preset vein-mines diamond and redstone first, but still takes any ore it passes.
 - Solo turtles stay single-level (`TARGET_Y`).
 
-## Optional: GPS turtles underground (only when they can report live)
+## Mobile GPS: army turtles serve GPS while they mine (decided 2026-11-05)
 
-- **When it's offered:** only when 4 army turtles could keep live contact from the shaft bottom. That means each has an ender modem, or a relay or ender hub reaches them at depth, detected from their hop counts at mining level. Otherwise nothing is offered, as with the GPS offer.
-- **What the turtles do:** the coordinator sends the 4 turtles to dig small pockets near the shaft bottom, spread out and at different heights. Each one already knows its exact position from its journal, so nothing has to be measured or typed. It parks there and serves GPS, reporting its health the same way PC hosts do.
-- **Losing contact:** if a GPS turtle stops being heard, it is shown as a problem on the GPS page. Turtles ignore fixes that disagree with their journal.
-- **Releasing them:** a monitor action sends them back to mining.
+- **Nobody parks.** Every army turtle with a modem answers GPS pings (`gps.CHANNEL_GPS`, "PING", like `gps host`) **with its current position, while it works**. It answers only between moves (never mid-move) and only when its position is certain:
+  - its coordinates are world coordinates (it has had a GPS fix, or it joined at the typed station);
+  - it isn't `lost`, isn't settling a crash, and has no pending journal intent.
+- **Where it helps:** turtles spread across shafts, spines, corridors and levels give a turtle at depth 4 or more hosts in range that aren't all in one plane. Multi-level armies and shaft traffic make that likely. `gps.locate` itself rejects ambiguous layouts, so a bad set just means no fix that moment.
+- **Safety:** a turtle uses a fix only if it agrees with its own journal within 2 blocks; otherwise it keeps its journal position and logs the disagreement. One wrong host can't move anyone.
+- **Cost:** a reply is one small message per ping, and pings come only from turtles that need a fix (at boot, after a crash, when surfacing, after a failed locate once they've moved 16 blocks).
+- **Live reporting is not needed for this.** A host's answer is only as good as its own position, and that is checked locally. The monitor's GPS page shows mobile hosts it has heard recently.
+- **Off switch:** `MOBILE_GPS` (army setting, default on).
 
 ## Work packages
 
