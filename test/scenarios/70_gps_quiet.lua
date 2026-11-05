@@ -25,7 +25,7 @@ return {
         -- No offer or prompt, but a status line saying why GPS is off (user request 2026-11-05).
         local txt = mon._text() .. A.c.term._text()
         H.check(not txt:find("possible", 1, true) and not txt:find("Set up", 1, true), "GPS offer shown with 3 PCs")
-        H.check(txt:find("GPS 3/4pc", 1, true), "no GPS status in the footer with 3 PCs")
+        H.check(txt:find("GPS 3/4+pc", 1, true), "no GPS status in the footer with 3 PCs")
 
         local D = H.serverComputer(pc(4, 9, 70, 9))     -- same Y as the others: flat
         sim.run({ maxTime = 130 })
