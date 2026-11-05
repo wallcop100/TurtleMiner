@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- TurtleMiner server UI, army pages (docs/ARMY_PLAN.md "UI / UX"): NET > ARMY list, the New wizard
 -- (name, station X Y Z, facing, ore presets -> levels), the army page with tabs MAP / TRAFFIC /
 -- STATS / SETTINGS, RELEASE of a silent turtle's claim, and the turtle-card JOIN picker.
@@ -37,11 +37,14 @@ local function cur(ui)
     return st and S.armies and S.armies[st.name] or nil, st
 end
 
--- Send a message to the coordinator (this PC must be the leader). Returns the result or nil, error.
+-- Send a message to the coordinator (on a replica it is forwarded to the leader; true = sent). Returns the result or nil, error.
 local function send(kind, body)
     if not T.army then return nil, "no army module" end
-    if T.isLeader and not T.isLeader() then return nil, "use the leader PC" end
     body.kind, body.from = kind, S.myId
+    if T.isLeader and not T.isLeader() then
+        if not T.forwardArmy then return nil, "no leader" end
+        return T.forwardArmy(body)
+    end
     local a, err = T.army.handle(body)
     if T.markDirty then T.markDirty() end
     if a == nil then return nil, err or "refused" end
@@ -180,6 +183,7 @@ local function wzCreate(ui)
     if not a then ui.msg = tostring(err); return end
     ui.army = { name = wz.name, tab = "map", lvl = 1, ox = 0, oy = 0, scr = 0 }
     ui.wz, ui.view, ui.msg = nil, "army", nil
+    if not S.armies[wz.name] then ui.view, ui.msg = "armies", "Sent to the leader" end
 end
 
 local function wzSpec(ui)
