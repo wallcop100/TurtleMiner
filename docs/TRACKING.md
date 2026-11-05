@@ -55,7 +55,7 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 
 ## HANDOFF (2026-11-01, paused for usage limit)
 
-- Branch `claude/vigilant-pasteur-g2krss` is green: `lua5.4 test/run.lua` → 63/63 (incl. mesh scenarios 56-62).
+- Branch `claude/vigilant-pasteur-g2krss` is green: `lua5.4 test/run.lua` → 71/71 (incl. mesh scenarios 56-62).
 - **Next in order:** army (ARMY_PLAN.md; include overlap check at install + right-of-way when two turtles meet) → GPS offer (CLUSTER_GPS_PLAN.md §3).
 - **Open user reports:** monitor RESUME acked but IDLE turtle didn't move (not reproduced; turtle now prints each applied command — get the screen line + `miner.lua` version next time). Key-derivation speed on a real CC computer unmeasured (`KDF_ITER` in tmcrypto.lua).
 - **Nothing has been accepted in-game yet**; see "In-game acceptance" below.

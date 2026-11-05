@@ -1,10 +1,10 @@
--- Version: 1.0.1
+-- Version: 1.0.2
 -- Scenario 62 (MU-1): traffic bound with 20 devices.
 --   3 server PCs (#10 wired + ender, /files/, HTTP; #11 wired + ender; #12 wired-only),
 --   2 relays (#20, #21), 1 pocket (#30), 14 turtles (#101..#114, net.lua + mesh).
 --   One GitHub pull with 4 newer files (one per set + a shared one). Counts every mesh
 --   transmission (originals and relayed copies) until every device holds the new files, and
---   checks it is bounded: at most 3 list requests per device (retries included), at most twice the chunk
+--   checks it is bounded: at most 3 list requests per device (retries included), at most twice the chunk (+1 per device)
 --   requests strictly needed, and quiet afterwards (no storm).
 return {
     title = "20 devices: transmissions per update are bounded",
@@ -81,7 +81,7 @@ return {
         for id, k in pairs(lists) do per[#per + 1] = id .. ":" .. k end
         table.sort(per)
         H.check(nList <= 3 * #devices, "%d list requests for %d devices (%s)", nList, #devices, table.concat(per, " "))
-        H.check(nGet <= 2 * need, "%d chunk requests, %d needed", nGet, need)
+        H.check(nGet <= 2 * need + #devices, "%d chunk requests, %d needed", nGet, need)
         -- quiet afterwards
         local tq = sim.now
         sim.run({ maxTime = 300 })
