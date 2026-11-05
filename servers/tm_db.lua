@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- TurtleMiner server, database part: shared state, files, event log, turtle records, the
 -- command queue (store-and-forward) and the replication format (snapshot / delta).
 -- Loaded by tminer_server.lua (or central_monitor.lua) into the shared table T:
@@ -32,7 +32,7 @@ T.DEDUPE_MAX = DEDUPE_MAX
 
 T.CMDS = {
     RETURN_HOME = true, PAUSE = true, RESUME = true, SET = true, REQUEST_STATUS = true,
-    RESET_JOB = true, RESET_HOME = true, UPDATE = true, REBOOT = true,
+    RESET_JOB = true, RESET_HOME = true, UPDATE = true, REBOOT = true, ARMY_JOIN = true, ARMY_LEAVE = true,
 }
 -- ---------------------------------------------------------------------------
 -- State

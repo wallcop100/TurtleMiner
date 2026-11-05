@@ -1,4 +1,4 @@
--- Version: 1.0.1
+-- Version: 1.0.2
 -- TurtleMiner mesh updates (docs/MESH_UPDATE_PLAN.md sections 2-3, docs/PROTOCOL.md "Mesh
 -- updates"). One module for every device: turtles (net.lua), server PCs and pockets
 -- (tminer_server), relays (relay.lua) and the updater CLI.
@@ -49,7 +49,7 @@ M.SETS = {
     miner = join({ "miner/config.lua", "miner/state.lua", "miner/nav.lua", "miner/inv.lua", "miner/mine.lua",
         "miner/net.lua", "miner/miner.lua", "miner/install.lua", "miner/startup.lua" }, NET),
     server = join({ "servers/tminer_server.lua", "servers/tm_db.lua", "servers/tm_radio.lua",
-        "servers/tm_cluster.lua", "servers/tm_ui.lua", "servers/tm_views.lua", "servers/tm_update.lua", "servers/tm_gps.lua", "servers/tm_gpssolve.lua", "servers/tm_army.lua",
+        "servers/tm_cluster.lua", "servers/tm_ui.lua", "servers/tm_views.lua", "servers/tm_update.lua", "servers/tm_gps.lua", "servers/tm_gpssolve.lua", "servers/tm_army.lua", "servers/tm_army_ui.lua",
         "servers/central_monitor.lua", "servers/startup.lua", "servers/update_server/github_pull.lua" }, NET),
     relay = join({ "servers/relay.lua", "servers/relay_startup.lua" }, NET),
 }

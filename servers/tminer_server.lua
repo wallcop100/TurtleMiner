@@ -1,4 +1,4 @@
--- Version: 1.2.0
+-- Version: 1.2.1
 -- TurtleMiner server: ONE program for every server PC (docs/CLUSTER_GPS_PLAN.md section 1).
 -- Each PC works out its roles at boot and every 60 s (and when a peripheral changes):
 --   monitor attached / pocket      -> UI (keyboard first; touch and mouse are extras)
@@ -57,6 +57,7 @@ for _, m in ipairs({ "tm_db", "tm_radio", "tm_cluster", "tm_ui", "tm_views", "tm
 -- GPS (CG-3): the optional tm_gps.lua sets T.gps = {wanted(), loop()} and loads tm_gpssolve.lua itself.
 loadModule("tm_gps", true)
 loadModule("tm_army", true)   -- army coordinator (leader only)
+loadModule("tm_army_ui", true)   -- army monitor pages (NET > ARMY)
 
 local S = T.S
 local TICK = 0.5
