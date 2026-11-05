@@ -234,3 +234,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-01 | coordinator | Order confirmed by user: GPS offer (CG-3, CG-3b, CG-4) starts straight after mesh updates (MU-1..3). |
 | 2026-11-01 | coordinator | Order agreed with user: finish mesh updates → army (AR-0..AR-5) → GPS offer. Fewer, leaner agents; small fixes done inline. |
 | 2026-11-01 | coordinator | Paused for weekly usage limit. Mesh updates agent stopped; WIP saved to docs/wip/mesh_updates_wip.patch. Handoff section added at top. |
+| 2026-11-05 | coordinator | User: refuelling 'doesn't search inv', reports stale level. Cause: at home only the FUEL_KEEP reserve is left after unloading and refuel refused to burn it; only 4 fuel names known; NEEDS_HELP reason never refreshed. Fix: burn reserve at home when short, unknown fuels via refuel(0), live reason with carried count. Scenario 90 (fails on old code, passes now). |
