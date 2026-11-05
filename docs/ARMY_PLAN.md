@@ -70,16 +70,17 @@ Basic modems reach 64 blocks, so with no ender modem turtles only talk to the ma
 - **Each level has its own ore focus:** a level made from the diamond preset vein-mines diamond and redstone first, but still takes any ore it passes.
 - Solo turtles stay single-level (`TARGET_Y`).
 
-## Mobile GPS: army turtles serve GPS while they mine (decided 2026-11-05)
+## Mobile GPS: every turtle with a known position is a GPS host (decided 2026-11-05)
 
-- **Nobody parks.** Every army turtle with a modem answers GPS pings (`gps.CHANNEL_GPS`, "PING", like `gps host`) **with its current position, while it works**. It answers only between moves (never mid-move) and only when its position is certain:
-  - its coordinates are world coordinates (it has had a GPS fix, or it joined at the typed station);
+- **All turtles, solo or army, automatically. No prompt, no setup, no buttons:** you never have to interact with a turtle for this. Nobody parks. Every turtle with a modem answers GPS pings (`gps.CHANNEL_GPS`, "PING", like `gps host`) **with its current position, while it works**. It answers only between moves (never mid-move) and only when its position is certain:
+  - its coordinates are world coordinates (it has had a GPS fix, or it joined an army at the typed station; a solo turtle without GPS works relative to its home and never hosts);
   - it isn't `lost`, isn't settling a crash, and has no pending journal intent.
 - **Where it helps:** turtles spread across shafts, spines, corridors and levels give a turtle at depth 4 or more hosts in range that aren't all in one plane. Multi-level armies and shaft traffic make that likely. `gps.locate` itself rejects ambiguous layouts, so a bad set just means no fix that moment.
 - **Safety:** a turtle uses a fix only if it agrees with its own journal within 2 blocks; otherwise it keeps its journal position and logs the disagreement. One wrong host can't move anyone.
 - **Cost:** a reply is one small message per ping, and pings come only from turtles that need a fix (at boot, after a crash, when surfacing, after a failed locate once they've moved 16 blocks).
 - **Live reporting is not needed for this.** A host's answer is only as good as its own position, and that is checked locally. The monitor's GPS page shows mobile hosts it has heard recently.
-- **Off switch:** `MOBILE_GPS` (army setting, default on).
+- **Off switch:** turtle setting `MOBILE_GPS` (default on), and the same as an army setting. The monitor's GPS page only *shows* mobile hosts heard recently (count, positions); there's nothing to configure.
+- **Not army-only:** this is built into the turtle's comms loop, so it can ship before the army (its own small work package, AR-G).
 
 ## Work packages
 
@@ -92,6 +93,7 @@ Already done elsewhere (not army work any more): bridge/relay (COMMS CM-5), GPS 
 | AR-2 | Turtle group mode: settings `GROUP`, ask for a claim at the station, mine only that branch, ask for segments before shared lanes (shaft/spine/mains), wait/queue, use slots when out of contact, join/leave, overlap check + right of way for solo turtles | new `miner/group.lua`; hooks in `miner/mine.lua` (lane entry points) and `miner/miner.lua` (phases) |
 | AR-3 | Monitor: group page (claims map, lane segments + direction, station queue), JOIN/LEAVE/RELEASE/PAUSE GROUP/RETURN GROUP; fits 26x20, keyboard-first | new `servers/tm_army_ui.lua`; 1 hook in `tm_views.lua` |
 | AR-T | Simulator: many turtles in one world without collisions (a cell holds one turtle; moving into a turtle fails), frozen/unloaded turtle, scenarios below | `test/lib/army.lua`, `test/scenarios/80_*`.. `89_*` |
+| AR-G | Mobile GPS host on every turtle (reply loop, certainty checks, journal cross-check of fixes, GPS-page list) | `miner/net.lua` hook + new `miner/gpsmobile.lua`; small `tm_gps.lua` view hook |
 | AR-R | Review + your in-game test | |
 
 Simulator scenarios to add: 4 and 20 turtles finish a grid with no collisions; a frozen turtle in the shaft (others wait, nothing reassigned); server restart mid-run; a solo turtle joins a running group; basic modems only (timed slots) and with a relay at the shaft bottom; full chest at the station; two solo turtles with overlapping grids get shifted apart; two solo turtles meeting head-on resolve right of way.
