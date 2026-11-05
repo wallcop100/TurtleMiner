@@ -77,7 +77,7 @@ return {
         cE.fs:write("setup.lua", readRepo(sim, "setup.lua"))
         local fetched = 0
         cE.http = function(url)
-            local path = url:match("vigilant%-pasteur%-g2krss/(.+)$")
+            local path = url:match("TurtleMiner/[^/]+/(.+)$")
             local body = path and readRepo(sim, path)
             if body then fetched = fetched + 1 end
             return body
