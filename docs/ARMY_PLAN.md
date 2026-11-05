@@ -68,18 +68,36 @@ Basic modems reach 64 blocks, so with no ender modem turtles only talk to the ma
 
 ## Work packages
 
-| WP | What | Files |
-|----|------|-------|
-| AR-0 | Protocol additions (claim, lease, segment request/grant/release, group join/leave, gps node health) and interfaces | docs |
-| AR-1 | Coordinator: groups, grid, claims, segment locks with direction | `servers/coord.lua`, hook into `central_monitor.lua` |
-| AR-2 | Turtle group mode: get work from the coordinator, request segments before shared lanes, wait/queue behaviour, join/leave | `miner.lua`, `mine.lua`, `net.lua` |
-| AR-3 | Bridge: turtle relay mode, `relay` program | `net.lua`, `servers/relay.lua` |
-| AR-4 | GPS nodes: `gpsnode` program, health reporting, setup | `servers/gpsnode.lua`, `setup.lua` |
-| AR-5 | Monitor group view and commands (fits 26x20) | `central_monitor.lua` |
-| AR-T | Simulator: many turtles in one world, GPS range limit, relay chains, unloaded (frozen) turtles | `test/**` |
+Already done elsewhere (not army work any more): bridge/relay (COMMS CM-5), GPS hosting and offer (CLUSTER_GPS CG-3/4), mesh updates (MU). The army builds on them.
+
+| WP | What | Files (owner) |
+|----|------|---------------|
+| AR-0 | Protocol + interfaces: `group_join/leave`, `claim_req/grant/done/release`, `seg_req/grant/release`, `slot` (timed shaft window), `station_q`; group record format; turtle-side `group` API | `docs/PROTOCOL.md`, `docs/INTERFACES.md` |
+| AR-1 | Coordinator on the leader: group records, shared grid (reuses mine.lua's layout maths), branch claims, segment locks with direction/convoys, timed up-shaft slots, station queue, replicated through the cluster DB, "never reassign a silent turtle" + RELEASE | new `servers/tm_army.lua`; 1 hook each in `tm_radio.lua` (message branch) and `tm_db.lua` (replicated table) |
+| AR-2 | Turtle group mode: settings `GROUP`, ask for a claim at the station, mine only that branch, ask for segments before shared lanes (shaft/spine/mains), wait/queue, use slots when out of contact, join/leave, overlap check + right of way for solo turtles | new `miner/group.lua`; hooks in `miner/mine.lua` (lane entry points) and `miner/miner.lua` (phases) |
+| AR-3 | Monitor: group page (claims map, lane segments + direction, station queue), JOIN/LEAVE/RELEASE/PAUSE GROUP/RETURN GROUP; fits 26x20, keyboard-first | new `servers/tm_army_ui.lua`; 1 hook in `tm_views.lua` |
+| AR-T | Simulator: many turtles in one world without collisions (a cell holds one turtle; moving into a turtle fails), frozen/unloaded turtle, scenarios below | `test/lib/army.lua`, `test/scenarios/80_*`.. `89_*` |
 | AR-R | Review + your in-game test | |
 
-Simulator scenarios to add: 4 and 20 turtles finish a grid with no collisions; a frozen turtle in the shaft (others wait, nothing reassigned); server restart mid-run; a solo turtle joins a running group; a relay chain of 3; GPS out of range falls back to the journal; full chest at the station.
+Simulator scenarios to add: 4 and 20 turtles finish a grid with no collisions; a frozen turtle in the shaft (others wait, nothing reassigned); server restart mid-run; a solo turtle joins a running group; basic modems only (timed slots) and with a relay at the shaft bottom; full chest at the station; two solo turtles with overlapping grids get shifted apart; two solo turtles meeting head-on resolve right of way.
+
+## Splitting it across sub-agents
+
+Rules that keep agents cheap and conflict-free:
+- **One agent owns each new file**; hooks into shared files are a few lines, listed in the table above, so merges are trivial.
+- **Contracts first.** AR-0 is written by the coordinator (not an agent): message fields and function signatures in PROTOCOL.md / INTERFACES.md. Every later agent codes against it and does not change it; if it must, it stops and reports.
+- **Sonnet for all build agents**, short briefs (goal, owned files, contract section, the scenarios it must make pass, report in under 15 lines). Opus only for the final review if wanted.
+- Each agent starts from `origin/main`, commits in its worktree, does not push; the coordinator merges, runs the suite, opens one PR per batch.
+
+| Batch | Agents (in parallel) | Needs | Size (rough) |
+|-------|----------------------|-------|--------------|
+| 0 | Coordinator writes AR-0 | — | small |
+| 1 | **A: AR-1 coordinator** (`tm_army.lua`) · **B: AR-T sim + scenarios** (`test/lib/army.lua`, scenarios written against the contract, SKIP until modules exist) | AR-0 | A large, B medium |
+| 2 | **C: AR-2 turtle group mode** (`group.lua` + hooks) · **D: AR-3 monitor group page** (`tm_army_ui.lua`) | A merged (C talks to it; D reads its records) | C large, D small |
+| 3 | **E: solo safety** (overlap check at install/boot + right of way when two turtles meet) | C merged (shares the lane/turtle-detect code) | small |
+| 4 | Coordinator: integration, full suite, PR; optional Opus review agent; your in-game test | all | — |
+
+Batch 1 and 2 each run two agents side by side; nothing in a batch edits the same file. If a batch's agent finishes early, the next batch's independent agent can start (D only needs A's record format, so it can start as soon as A commits).
 
 ## Answers (2026-10-31)
 
