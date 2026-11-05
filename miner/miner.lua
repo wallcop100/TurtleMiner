@@ -1,4 +1,4 @@
--- Version: 1.5.0
+-- Version: 1.6.0
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
@@ -314,6 +314,7 @@ local function getStatus()
     s.facing = st.facing
     s.home = copyPos(st.home)
     s.gps = st.gps and true or false
+    s.gpsHost = net.gpsHost() or nil
     s.fuelNeeded = need
     s.job = { corridor = job.corridor, branch = job.branch, side = job.side, step = job.step }
     s.stats = { ores = st.stats.ores, blocks = st.stats.blocks, trips = st.stats.trips,

@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.2.0
 -- TurtleMiner navigation: journaled moves/turns, retrying dig/attack, goTo, crash recovery,
 -- GPS sync and facing calibration.
 --
@@ -81,6 +81,9 @@ local st = nil
 local opts = {}
 local movesSinceSave = 0
 local gpsFailY = nil        -- st.pos.y of the last failed gps.locate (see nav.gpsLocate)
+local inFlight = false      -- a journaled move/turn is between its intent line and its done line
+local fixRejected = nil     -- text of the last rejected GPS fix (logged once)
+local GPS_TRUST = 2         -- a fix must be within this many blocks of a trusted journal position
 
 local DX = { [0] = 0, [1] = 1, [2] = 0, [3] = -1 }
 local DZ = { [0] = -1, [1] = 0, [2] = 1, [3] = 0 }
@@ -219,6 +222,7 @@ local function step(op)
     local seen = nil
     if op == "l" or op == "r" or before == "unlimited" then seen = look(INSPECT[op]) end
     state.logIntent(op, before, seen)
+    inFlight = true
     local ok, err
     if op == "l" then
         ok, err = turtle.turnLeft()
@@ -231,6 +235,7 @@ local function step(op)
         st.pos, st.facing = applyOp(st.pos, st.facing, op)
     end
     state.logDone(st, fuel())   -- on failure this closes the intent with the unchanged pos
+    inFlight = false
     if ok then afterSuccess() end
     return ok, err
 end
@@ -425,7 +430,14 @@ end
 -- blocks above the failure, or is within GPS_NEAR_HOME blocks of home (or force is true).
 local GPS_RETRY_UP, GPS_NEAR_HOME = 16, 16
 
-function nav.gpsLocate(force)
+-- ref: journal position to check a fix against (recover passes its settled journal position);
+-- default st.pos when the turtle is not lost and its facing is known. A fix more than GPS_TRUST
+-- blocks from a trusted journal position is rejected (one lying host can't move a turtle).
+-- True while a journaled move/turn is in flight (mobile GPS stays silent), and the state view.
+function nav.moving() return inFlight end
+function nav.view() return st, opts.cfg end
+
+function nav.gpsLocate(force, ref)
     if not st or not st.gps or not gps or not gps.locate then return nil end
     if gpsFailY and not force and type(st.pos) == "table" then
         local near = type(st.home) == "table" and nav.dist(st.pos, st.home) <= GPS_NEAR_HOME
@@ -438,7 +450,16 @@ function nav.gpsLocate(force)
     end
     gpsFailY = nil
     -- round, not floor: guards against 12.9999 style float noise
-    return { x = math.floor(x + 0.5), y = math.floor(y + 0.5), z = math.floor(z + 0.5) }
+    local fix = { x = math.floor(x + 0.5), y = math.floor(y + 0.5), z = math.floor(z + 0.5) }
+    -- a fresh state (phase BOOT, nothing journaled yet) has no position to trust
+    if ref == nil and not st.lost and not st.facingUnknown and st.phase ~= "BOOT" then ref = st.pos end
+    if type(ref) == "table" and ref.x and ref.y and ref.z and nav.dist(fix, ref) > GPS_TRUST then
+        local msg = "GPS fix " .. fix.x .. "," .. fix.y .. "," .. fix.z .. " disagrees with journal "
+            .. ref.x .. "," .. ref.y .. "," .. ref.z .. ", journal kept"
+        if fixRejected ~= msg then fixRejected = msg; event("warn", msg) end
+        return nil
+    end
+    return fix
 end
 
 local function facingFromDelta(dx, dz)
@@ -866,7 +887,7 @@ function nav.recover(stIn)
 
     -- step 4: GPS. Underground a GPS turtle is usually out of modem range (64 blocks): with no
     -- fix it recovers exactly like a blind turtle (journal, inspect, known-open map probing).
-    local g = st.gps and nav.gpsLocate() or nil
+    local g = st.gps and nav.gpsLocate(false, (not rolledBack and not posUnknown) and cur.pos or nil) or nil
     local isOpen = knownOpenMap(points, knownUpto, not rolledBack)
     if g then
         local corrected = not samePos(g, cur.pos)

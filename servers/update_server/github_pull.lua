@@ -1,4 +1,4 @@
--- Version: 1.4.1
+-- Version: 1.5.1
 -- Pulls newer TurtleMiner files from GitHub into the update server's folder
 -- (and the server's own programs). Used by update_server at boot and every
 -- tminer.pull_minutes (default 60, 0 = boot only).
@@ -20,7 +20,7 @@ M.DEFAULT_BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/main/
 
 M.MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "net.lua",
             "miner.lua", "updater.lua", "install.lua", "startup.lua",
-            "tmcrypto.lua", "tmwords.lua", "tmjoin.lua" }
+            "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "gpsmobile.lua" }
 
 -- Server programs: repo path -> local path. Only replaced if already present (so a
 -- monitor-less update server doesn't suddenly get a monitor). The third field lists files

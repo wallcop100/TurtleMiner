@@ -1,4 +1,4 @@
--- Version: 1.0.1
+-- Version: 1.0.2
 -- TurtleMiner GPS constellation from the server PCs (docs/CLUSTER_GPS_PLAN.md section 3).
 -- Offered, never required. The cluster leader counts the PCs with a wireless or ender modem;
 -- with >= 4 and a good layout (measured, not coplanar, >= 6 blocks apart) it offers
@@ -786,6 +786,14 @@ local function renderGps(ui)
     if V.note then add(V.note, colors.orange) end
     local cov, ys = G.coverage()
     if cov then add("Reach: " .. cov); add("Host heights: Y " .. ys) end
+    local mob, ys2 = 0, {}
+    for id, r in pairs(S.turtles or {}) do
+        if r.st and r.st.gpsHost and r.lastSeen and now() - r.lastSeen < 120000 then
+            mob = mob + 1
+            if type(r.st.pos) == "table" and mob <= 4 then ys2[#ys2 + 1] = "#" .. id .. " Y" .. tostring(r.st.pos.y) end
+        end
+    end
+    if mob > 0 then add("Mobile hosts heard: " .. mob .. " (" .. table.concat(ys2, " ") .. ")", colors.lightGray) end
     for _, id in ipairs(hostIds()) do
         local h = V.hosts[id]
         add(string.format("#%d %s %d,%d,%d %s%s", id, h.st, h.x, h.y, h.z, V.kinds[id] or "", h.why and (" - " .. h.why) or ""),

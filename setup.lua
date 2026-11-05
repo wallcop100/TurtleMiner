@@ -1,4 +1,4 @@
--- Version: 1.5.1
+-- Version: 1.6.1
 -- One-shot downloader. Usage (in CC, needs the HTTP API enabled):
 --   wget run <BASE>/setup.lua server    -- any server PC: tminer_server + update files (/files/)
 --   wget run <BASE>/setup.lua monitor   -- server PC without update files (same program)
@@ -22,7 +22,7 @@ local BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/" .. BRAN
 
 local MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "net.lua",
                 "miner.lua", "updater.lua", "install.lua", "startup.lua",
-                "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua" }
+                "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua", "gpsmobile.lua" }
 -- Mining network + mesh update modules: every device gets them (from miner/).
 local NETMODS = { "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua", "updater.lua" }
 -- tminer_server and its modules (central_monitor = compatibility launcher for old startups)

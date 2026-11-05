@@ -1,4 +1,4 @@
--- Version: 1.3.0
+-- Version: 1.4.0
 -- TurtleMiner network layer (TMINER protocol v1, see docs/PROTOCOL.md and docs/COMMS.md).
 -- One rednet wrapper for the whole turtle. Never moves the turtle.
 -- Works offline: with no modem every send is a silent no-op.
@@ -69,6 +69,7 @@ local function loadMod(name)
 end
 local crypto = loadMod("tmcrypto")
 local Mesh = loadMod("tmmesh")
+local GpsMobile = loadMod("gpsmobile")
 local signer = nil        -- nil: no network (send nothing, accept nothing)
 local netName = nil
 local mesh = nil          -- tmmesh engine (needs the network)
@@ -521,6 +522,7 @@ end
 -- records the raw-modem distance to each server PC it hears directly and sends them, so the
 -- server PCs can anchor a GPS constellation without asking anyone.
 local posFn, gsamp, gsLast, gsSent = nil, {}, {}, 0
+function net.gpsHost() return GpsMobile ~= nil and GpsMobile.active() end
 function net.setGpsPos(fn) posFn = fn end
 local function gpsSample(ev)
     local p, d = ev[5], ev[6]
@@ -544,6 +546,7 @@ local function onEvent(ev)
     elseif e == "timer" then
         fireRelay(ev[2])
     elseif e == "modem_message" then
+        if GpsMobile and ev[3] == 65534 then pcall(GpsMobile.onMessage, ev) end
         gpsSample(ev)
         -- A basic-modem sender heard from beyond any basic range: our modem is an ender modem.
         local p, d = ev[5], ev[6]
@@ -587,6 +590,7 @@ function net.init(c)
     loadNetwork()
     readOverrides()
     openModems()
+    if GpsMobile then pcall(GpsMobile.open) end
     mesh = nil
     if Mesh and signer and netKey then
         local okM, e = pcall(function()

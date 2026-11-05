@@ -1,4 +1,4 @@
--- Version: 1.4.0
+-- Version: 1.5.0
 -- TurtleMiner installer. The only program that asks questions.
 --
 --   install              join a mining network (first time), check hardware, fetch missing
@@ -38,7 +38,7 @@ end
 local REQUIRED = {
     "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua",
     "net.lua", "miner.lua", "updater.lua", "startup.lua",
-    "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua",
+    "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua", "gpsmobile.lua",
 }
 -- Needed to fetch the rest over the mesh (GitHub first when HTTP works).
 local MESH_FILES = { "tmmesh.lua", "tmguard.lua", "updater.lua" }
