@@ -1,4 +1,4 @@
--- Version: 1.3.1
+-- Version: 1.4.0
 -- Scenario helpers: pass/fail/skip plumbing, crash predicates, a fake TMINER
 -- server (virtual rednet node), truth-vs-belief watchers and the standard
 -- "turtle at home with a chest behind it" setup.
@@ -326,7 +326,7 @@ function H.watch(t, srv, opts)
     local prev = srv.onStatus
     srv.onStatus = function(from, msg)
         if prev then prev(from, msg) end
-        if from ~= t.id or skip[msg.phase] or type(msg.pos) ~= "table" then return end
+        if from ~= t.id or (msg.from ~= nil and msg.from ~= t.id) or skip[msg.phase] or type(msg.pos) ~= "table" then return end
         wt.statusChecked = wt.statusChecked + 1
         local wp = fr.toWorld(msg.pos)
         local wf = msg.facing and fr.facingToWorld(msg.facing)
@@ -811,9 +811,9 @@ end
 -- opts: id (100), pos, modemKind ("basic"), modems (list, overrides modemKind).
 -- Returns srv = {c, M (central_monitor module), rec(id), log()}; M runs in the computer.
 H.SERVER_FILES = { "tminer_server.lua", "central_monitor.lua", "tm_db.lua", "tm_radio.lua", "tm_cluster.lua",
-    "tm_ui.lua", "tm_views.lua", "tm_update.lua", "tm_gps.lua", "tm_gpssolve.lua" }
+    "tm_ui.lua", "tm_views.lua", "tm_update.lua", "tm_gps.lua", "tm_gpssolve.lua", "tm_army.lua" }
 -- Shared with the turtles (setup.lua installs them on every computer from miner/).
-H.SHARED_FILES = { "tmcrypto.lua", "tmwords.lua", "tmjoin.lua" }
+H.SHARED_FILES = { "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua", "updater.lua" }
 
 function H.installShared(c)
     for _, n in ipairs(H.SHARED_FILES) do
@@ -926,6 +926,174 @@ function H.netTurtle(t, label)
         end)
     end, { background = true })
     return c
+end
+
+---------------------------------------------------------------------------
+-- mesh updates (MU-1..3): real devices booted from their real startup files
+---------------------------------------------------------------------------
+function H.repo(path)
+    local f = io.open(ROOT .. "/" .. path, "rb")
+    if not f then return nil end
+    local s = f:read("a")
+    f:close()
+    return s
+end
+
+-- The tmmesh module on the host (file sets, layouts, versions).
+function H.mesh()
+    if not H._mesh then H._mesh = dofile(ROOT .. "/miner/tmmesh.lua") end
+    return H._mesh
+end
+
+-- Same file with a higher version line (and optional extra code at the end / start).
+function H.bump(text, version, append, prepend)
+    local out = text:gsub("^%-%- Version: [%d%.]+", "-- Version: " .. version, 1)
+    if prepend then
+        local first, rest = out:match("^([^\n]*\n)(.*)$")
+        out = first .. prepend .. "\n" .. rest
+    end
+    if append then out = out .. "\n" .. append .. "\n" end
+    return out
+end
+
+-- Install a role's files like setup.lua does (layout from tmmesh). role: "server" (with
+-- files/), "monitor", "pocket", "relay", "turtle".
+function H.installRole(c, role)
+    local Mesh = H.mesh()
+    local lrole = (role == "monitor") and "server" or role
+    local L = Mesh.layout(lrole, role == "server" and "files/" or nil)
+    for _, name in ipairs(L.names) do
+        local body = H.repo(name)
+        if body then for _, p in ipairs(L.paths[name]) do c.fs:write(p, body) end end
+    end
+    if role == "server" or role == "monitor" or role == "pocket" then
+        c.fs:write("startup.lua", 'shell.run("tminer_startup")\n')
+        if role == "server" then c.fs:mkdirs("files") end
+    elseif role == "relay" then
+        c.fs:write("startup.lua", 'shell.run("relay_startup")\n')
+    end
+end
+
+-- A computer running its real startup (tminer_startup / relay_startup) after H.installRole.
+-- opts: id, role, label, pos, modems, pocket, http (fn(url) -> body), settings.
+-- Returns dev = {c, T() (the server table, nil on relays), boot(), files(), role}.
+function H.meshComputer(opts)
+    local role = opts.role or "server"
+    local c = sim.computer({ id = opts.id, label = opts.label or (role .. tostring(opts.id)), pos = opts.pos,
+        modems = opts.modems, pocket = role == "pocket", basic = opts.basic, termSize = opts.termSize })
+    c.http = opts.http
+    H.installRole(c, role)
+    if opts.settings then
+        local s = {}
+        for k, v in pairs(opts.settings) do s["tminer." .. k] = v end
+        c.fs:write(".settings", sim.textutils.serialize(s))
+    end
+    local dev = { c = c, role = role, id = c.id }
+    function dev.T() return c.env and c.env.TMINER_SERVER or nil end
+    function dev.boot() sim.boot(c, { "startup" }, { background = true }) end
+    function dev.mesh() local T = dev.T(); return T and T.mesh end
+    if opts.noBoot ~= true then dev.boot() end
+    return dev
+end
+
+-- Engine of any device: server/pocket (T.mesh) or turtle (net.mesh()).
+function H.engineOf(c)
+    if c.env and c.env.TMINER_SERVER then return c.env.TMINER_SERVER.mesh end
+    if c.net and c.net.mesh then return c.net.mesh() end
+    if c.env and c.env.TMINER_NET then return c.env.TMINER_NET.mesh() end
+    return nil
+end
+
+-- Version line of a file on a computer.
+function H.verOf(c, path)
+    local s = c.fs:read(path)
+    return s and s:match("^%-%- Version: ([%d%.]+)") or nil
+end
+
+-- An HTTP stub serving the repo, with overrides {["miner/nav.lua"] = text}.
+function H.github(over)
+    local G = { over = over or {}, gets = 0 }
+    function G.fn(url)
+        G.gets = G.gets + 1
+        local path = url:match("TurtleMiner/[^/]+/[^/]+/[^/]+/(.*)$") or url:match("/([^/]+/[^/]+)$")
+        local rel = url:gsub("^https?://[^/]+/[^/]+/[^/]+/", "")
+        -- strip the branch (may contain slashes): find the first known repo prefix
+        local i = rel:find("miner/", 1, true) or rel:find("servers/", 1, true)
+        if i then rel = rel:sub(i) else rel = rel:match("([^/]+)$") end
+        if G.over[rel] then return G.over[rel] end
+        return H.repo(rel)
+    end
+    return G
+end
+
+-- A fake mesh peer (virtual node) that offers releases. opts: id, net (envelope signing;
+-- false = unsigned), noteNet (release-note signing, default = net), files = {[repo path] =
+-- text}, vs (summary it advertises, default {m="ffffff", s="ffffff", r="ffffff"}),
+-- tamper(name, text) -> text actually served, beacon (s, default 5), marks (bad marks listed),
+-- noteEdit(note) (change a note after signing).
+function H.fakePeer(opts)
+    local id = opts.id
+    local net = opts.net
+    if net == nil then net = H.NET end
+    local noteNet = opts.noteNet
+    if noteNet == nil then noteNet = net end
+    local P = { lists = 0, chunks = 0, active = true, seq = 0 }
+    local notes = {}
+    for name, text in pairs(opts.files or {}) do
+        local n = { t = "rel", name = name, version = text:match("^%-%- Version: ([%d%.]+)"), sha256 = H.C.sha256hex(text),
+            size = #text, origin = id, ts = H.epochMs() }
+        if noteNet then n.sig = H.signer(noteNet).mac(n) end
+        if opts.noteEdit then opts.noteEdit(n) end
+        notes[#notes + 1] = n
+    end
+    P.notes = notes
+    local function send(to, kind, body)
+        P.seq = P.seq + 1
+        local m = { v = 1, kind = kind, from = id, to = to, boot = sim.BASE_EPOCH + 7, seq = P.seq, ts = H.epochMs(),
+            hops = 0, hop = 0, ohop = 0, mk = "ender" }
+        for k, v in pairs(body) do m[k] = v end
+        if net then H.sign(m, net) end
+        sim.net.inject(id, nil, m, "TMINER")
+    end
+    local vs = opts.vs or { m = "ffffff", s = "ffffff", r = "ffffff" }
+    sim.net.addNode(id, function(from, msg, protocol)
+        if not P.active or protocol ~= "TMINER" or type(msg) ~= "table" or msg.to ~= id then return end
+        if msg.kind == "list_get" then
+            P.lists = P.lists + 1
+            local list = {}
+            for _, n in ipairs(notes) do local c = {} for k, v in pairs(n) do c[k] = v end list[#list + 1] = c end
+            send(from, "files_list", { notes = list, marks = opts.marks or {}, vs = vs })
+        elseif msg.kind == "file_get" then
+            P.chunks = P.chunks + 1
+            local text = opts.files[msg.name]
+            if not text then return end
+            if opts.tamper then text = opts.tamper(msg.name, text) end
+            local off = msg.off or 0
+            send(from, "file_chunk", { name = msg.name, sha = msg.sha, off = off, total = #text,
+                data = text:sub(off + 1, off + 16384) })
+        end
+    end)
+    sim.every(opts.beacon or 5, function()
+        if not P.active then return false end
+        send("all", "beacon", { dev = "server", ver = "9.9.9", vs = vs })
+    end, 0)
+    return P
+end
+
+-- Mesh transmissions (originals + relays) of the given kinds since t0: total, by kind.
+function H.meshTraffic(t0, kinds)
+    kinds = kinds or { list_get = true, files_list = true, file_get = true, file_chunk = true, bad = true,
+        beacon = true, pull_req = true, pull_res = true }
+    local by, n, bytes = {}, 0, 0
+    for _, e in ipairs(sim.net.log) do
+        local m = e.msg
+        if e.time >= (t0 or 0) and type(m) == "table" and kinds[m.kind] then
+            by[m.kind] = (by[m.kind] or 0) + 1
+            n = n + 1
+            if m.kind == "file_chunk" and type(m.data) == "string" then bytes = bytes + #m.data end
+        end
+    end
+    return n, by, bytes
 end
 
 -- Commands a script turtle applied, by name (and SET key).

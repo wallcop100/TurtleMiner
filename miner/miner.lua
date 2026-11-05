@@ -1,4 +1,4 @@
--- Version: 1.4.4
+-- Version: 1.5.0
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
@@ -239,6 +239,8 @@ local function sendAway()
 end
 
 local function markArrival()
+    local m = net.mesh and net.mesh()
+    if m then pcall(m.tripDone) end   -- update probation: a trip completed
     local s = st.stats
     if not s.tripStart then return end
     local dur = (os.epoch("utc") - s.tripStart) / 1000
@@ -560,17 +562,28 @@ local function measureHomeOverhead()
     bootFuel = nil
 end
 
--- Runs the updater. If something was installed, saves `after` as the phase to come
--- back to and reboots (startup -> miner -> resumePhase); otherwise just returns.
+-- Mesh update fetched and complete (or a bad release to roll back): install at home.
+local function meshReady()
+    if cfg.AUTO_UPDATE == false then return false end
+    local m = net.mesh and net.mesh()
+    if not m then return false end
+    local ok, r = pcall(m.ready)
+    return ok and r ~= nil
+end
+
+-- Runs the updater (installs what the mesh fetched; after an UPDATE command it asks the
+-- network first and waits up to 20 s at home). If something was installed, saves `after` as
+-- the phase to come back to and reboots once (startup -> miner -> resumePhase).
 local function runUpdate(after, afterReason)
+    local asked = st.flags.update
     st.flags.update = false
     save()
-    net.event("info", "running updater")
+    net.event("info", asked and "running updater" or "installing update")
     local updated = false
     -- updater.run(opts) -> updated(bool), info; it never reboots, we decide.
     local okR, mod = pcall(require, "updater")
     if okR and type(mod) == "table" and type(mod.run) == "function" then
-        local ok, r = pcall(mod.run, {})
+        local ok, r = pcall(mod.run, { mesh = net.mesh and net.mesh() or nil, wait = asked and 20 or 0 })
         if ok then updated = (r == true) else net.event("warn", "updater failed: " .. firstLine(r)) end
     else
         net.event("warn", "updater not available: " .. firstLine(mod))
@@ -667,7 +680,7 @@ H.REFUELING = function()
         net.event("info", "job reset to corridor 0")
     end
     local nxt, why = nextAfterHome()
-    if st.flags.update then
+    if st.flags.update or meshReady() then
         -- After an update reboot, come back to what we were about to do.
         -- REFUELING (not TO_WORK) so the fuel check still runs after the reboot.
         runUpdate(nxt == "TO_WORK" and "REFUELING" or nxt, nxt ~= "TO_WORK" and why or nil)
@@ -762,8 +775,8 @@ H.TO_WORK, H.MINING, H.VEIN = work, work, work
 
 local function idleLike(onResume)
     local isDone = st.phase == "DONE"
-    if atHome() and st.flags.update then runUpdate(st.phase, st.reason) end
-    waitFor(cfg.HELP_RETRY or 30, function() return atHome() and st.flags.update end)
+    if atHome() and (st.flags.update or meshReady()) then runUpdate(st.phase, st.reason) end
+    waitFor(cfg.HELP_RETRY or 30, function() return atHome() and (st.flags.update or meshReady()) end)
     if req.homeReset then req.homeReset = false; return "IDLE", "home reset" end
     if req.resume then
         req.resume = false
@@ -1090,6 +1103,7 @@ end
 net.init(cfg)
 net.setValidator(validateCmd)
 net.setGpsPos(function() return st and st.gps and type(st.pos) == "table" and st.pos or nil end)
+if net.mesh and net.mesh() then net.mesh().o.atHome = function() return st ~= nil and atHome() end end
 -- Keyboard controls on the turtle itself, so it can be run with no monitor or modem.
 local KEYHELP = "Keys: R resume  P pause  B return home  S status  H twice = this is home  N network to disk"
 local function keyboard()

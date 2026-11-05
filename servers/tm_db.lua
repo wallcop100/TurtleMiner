@@ -138,6 +138,7 @@ end
 
 function T.loadDb()
     S.homes = loadTable(HOME_FILE) or {}
+    if T.army then T.army.load() end
     local d = loadTable(DB_FILE)
     if d then
         S.epoch, S.dbSeq = tonumber(d.epoch) or 0, tonumber(d.seq) or 0
@@ -513,7 +514,7 @@ function T.snapshot()
     local turtles, pend = {}, {}
     for id, r in pairs(S.turtles) do turtles[id] = packRec(r) end
     for id, p in pairs(S.pending) do if not p.forwarded then pend[id] = packCmd(p) end end
-    return { turtles = turtles, homes = S.homes, pending = pend, done = S.done, log = S.log }
+    return { turtles = turtles, homes = S.homes, pending = pend, done = S.done, log = S.log, armies = S.armies }
 end
 
 -- Leader: collect the changes. Returns the delta table and whether it is urgent (queue or
@@ -528,6 +529,10 @@ function T.takeDelta()
         d.done[id] = S.done[id] or false
         any, urgent = true, true
     end
+    if T.army then
+        local da = T.army.takeDelta()
+        if da then d.armies = da; any, urgent = true, true end
+    end
     S.dT, S.dH, S.dP, S.logOut = {}, {}, {}, {}
     if not any then return nil end
     S.dbSeq = S.dbSeq + 1
@@ -536,7 +541,7 @@ function T.takeDelta()
 end
 
 function T.pendingUrgent()
-    return next(S.dP) ~= nil or next(S.dH) ~= nil
+    return next(S.dP) ~= nil or next(S.dH) ~= nil or next(S.dA or {}) ~= nil
 end
 
 local function syncForwarded()
@@ -556,6 +561,7 @@ function T.applySnapshot(epoch, seq, db)
         if type(d) == "table" then S.done[id] = d end
     end
     S.homes = type(db.homes) == "table" and db.homes or {}
+    if T.army then T.army.applySnapshot(db.armies) end
     if type(db.log) == "table" then
         S.log = {}
         for _, l in ipairs(db.log) do if type(l) == "string" then S.log[#S.log + 1] = l end end
@@ -575,6 +581,7 @@ function T.applyDelta(seq, d)
     for id, r in pairs(type(d.turtles) == "table" and d.turtles or {}) do
         if r then putRec(id, r) else S.turtles[id] = nil end
     end
+    if T.army and d.armies then T.army.applyDelta(d.armies) end
     local homes = false
     for id, h in pairs(type(d.homes) == "table" and d.homes or {}) do
         S.homes[id] = h or nil

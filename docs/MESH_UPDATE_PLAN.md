@@ -39,6 +39,15 @@ Every device belongs to exactly one **mining network**: a name plus a secret key
 - A bad mark (release id plus the reason, signed) spreads like an update. Devices that haven't applied it skip it. Devices that already applied it roll back too, and the monitor shows "update x.y.z rolled back on #12: <reason>".
 - A newer release clears the bad mark (you fix the problem, bump the version, it spreads again).
 
+## Status (2026-11-01)
+
+MU-0..MU-3 built (`miner/tmmesh.lua`, `miner/tmguard.lua`, `miner/updater.lua` 2.0, startups, servers, relay). Protocol: docs/PROTOCOL.md "Mesh updates". Scenarios 56-62 (GitHub pull reaches 2 PCs, relay, pocket, 3 turtles incl. one out of range; hand edit on a wired-only PC; broken/tampered files never install; crashing release rolled back and blocked everywhere, fixed version clears it; foreign/unsigned releases ignored; Check now + `updater --pull`; 20-device traffic bound). Differences from the plan above:
+- Summaries are per role set (`vs = {m, s, r, b}`, 6 hex each); the same summary is asked for once, so N devices cost about N list requests per release, not N².
+- Turtles: probation ends at the first trip home or after 10 minutes at home. A gps role set does not exist (GPS hosts run tminer_server: server set).
+- An edit without a version bump, or one that doesn't compile, stays local (not released, logged once) instead of being overwritten.
+- Relays send a `beacon` every 60 s (they send nothing else); pockets too.
+- Transfers resume within a session only (partial files are kept in memory).
+
 ## Work packages
 
 | WP | What |

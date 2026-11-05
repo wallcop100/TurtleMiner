@@ -1,39 +1,14 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- Scenario 54 (MU-0): forged, tampered, replayed and stale messages are rejected.
 --  A (turtle, real net.lua): commands that are unsigned, signed with another key, tampered
 --    after signing, replayed (same copy again; same signature under a new seq), 11 minutes
 --    old or 11 minutes in the future: none applied, none acked. A good one: applied once.
 --  B (server, real tminer_server): a catch-up log 20 minutes old is accepted (its events carry
 --    signed timestamps); a status 11 minutes old is not.
---  C (updates): update servers that are unsigned or on another network offer config.lua
---    99.0.0: the turtle's updater installs nothing. The network's own update server: installed.
-local function fakeUpdateServer(sim, H, id, files, net)
-    local seq, srv = 0, { active = true, checks = 0 }
-    local function send(to, kind, body)
-        seq = seq + 1
-        local m = { v = 1, kind = kind, from = id, to = to, boot = sim.BASE_EPOCH, seq = seq,
-            ts = H.epochMs(), hops = 0 }
-        for k, v in pairs(body) do m[k] = v end
-        if net then H.sign(m, net) end
-        sim.net.inject(id, nil, m, "TMINER")
-    end
-    sim.net.addNode(id, function(from, msg, protocol)
-        if not srv.active or protocol ~= "TMINER" or type(msg) ~= "table" then return end
-        if msg.kind == "update_check" then
-            srv.checks = srv.checks + 1
-            local list = {}
-            for name, f in pairs(files) do list[#list + 1] = { name = name, version = f.version } end
-            send(from, "update_manifest", { files = list })
-        elseif msg.kind == "file_get" and files[msg.name] then
-            send(from, "file", { name = msg.name, version = files[msg.name].version, content = files[msg.name].content })
-        end
-    end)
-    return srv
-end
-
+--  Forged / foreign updates: scenario 60 (mesh updates, MU-1).
 return {
     title = "forged / tampered / replayed / stale messages rejected",
-    needs = { "net", "tmcrypto", "updater" },
+    needs = { "net", "tmcrypto" },
     run = function(sim, H)
         local netB = H.network("other", { "river", "torch", "birch", "creek" })
         local w = sim.world()
@@ -114,47 +89,7 @@ return {
         H.check(S.T.S.bad >= 1, "server did not count the stale status")
         S.kill()
 
-        -- C: forged update servers -------------------------------------------------------
-        local cfgSrc = t.fs:read("config.lua")
-        local newer = cfgSrc:gsub("^%-%- Version: [%d%.]+", "-- Version: 99.0.0")
-        local files = { ["config.lua"] = { version = "99.0.0", content = newer } }
-        local function runUpdater()
-            local res
-            c.jobs[#c.jobs + 1] = function(net, G)
-                local U = assert(G.loadfile("updater.lua", nil, G))("updater")
-                local ok, info = U.run({ timeout = 2, fileTimeout = 2 })
-                res = { ok = ok, reason = info.reason, files = info.files, rejected = U.rejected }
-            end
-            H.runUntil({ t = t }, function() return res ~= nil end, 30, "updater run")
-            return res
-        end
-        local unsigned = fakeUpdateServer(sim, H, 200, files, nil)
-        local foreign = fakeUpdateServer(sim, H, 201, files, netB)
-        local r1 = runUpdater()
-        H.check(not r1.ok and t.fs:read("config.lua") == cfgSrc, "forged update installed (%s)", tostring(r1.reason))
-        H.check(unsigned.checks > 0 and foreign.checks > 0 and r1.rejected >= 2,
-            "forged servers not asked / not rejected (%d replies ignored)", r1.rejected or -1)
-        -- A forged file answer to a genuine manifest: also refused.
-        unsigned.active, foreign.active = false, false
-        local mixSeq = 0
-        sim.net.addNode(202, function(from, msg, protocol)
-            if protocol ~= "TMINER" or type(msg) ~= "table" then return end
-            mixSeq = mixSeq + 1
-            local m = { v = 1, from = 202, to = from, boot = sim.BASE_EPOCH, seq = mixSeq, ts = H.epochMs(), hops = 0 }
-            if msg.kind == "update_check" then
-                m.kind, m.files = "update_manifest", { { name = "config.lua", version = "99.0.0" } }
-                H.sign(m)                                   -- genuine manifest...
-            elseif msg.kind == "file_get" then
-                m.kind, m.name, m.version, m.content = "file", "config.lua", "99.0.0", newer
-                H.sign(m)
-                m.content = newer .. "\nprint('owned')\n"    -- ...file tampered on the way
-            else return end
-            sim.net.inject(202, nil, m, "TMINER")
-        end)
-        local r2 = runUpdater()
-        H.check(not r2.ok and t.fs:read("config.lua") == cfgSrc, "tampered file installed (%s)", tostring(r2.reason))
         H.note(string.format("A: 6 forged cmds dropped (bad=%d), relayed copy ok, replays ignored; B: 20 min old catch-up"
-            .. " logged, 11 min old status dropped; C: unsigned/foreign update servers ignored (%s), tampered file refused (%s)",
-            c.net.stats.bad, r1.reason, r2.reason))
+            .. " logged, 11 min old status dropped", c.net.stats.bad))
     end,
 }

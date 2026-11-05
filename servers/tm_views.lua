@@ -1,8 +1,9 @@
--- Version: 1.1.1
+-- Version: 1.2.0
 -- TurtleMiner server UI, part 2: the turtle card, command buttons, SET pickers (number,
 -- yes/no, focus ore), confirmations, the text / event log views and the mining network
 -- screen (NET: join requests to approve, show the join phrase after a confirmation, copy
--- the network to a floppy disk). Drawing helpers come from tm_ui.lua (T.ui); each screen
+-- the network to a floppy disk) and the UPDATES screen (versions per device, updates in
+-- progress, rolled-back releases, CHECK NOW). Drawing helpers come from tm_ui.lua (T.ui); each screen
 -- registers itself in T.VIEWS.
 local T = ...
 local S = T.S
@@ -372,6 +373,66 @@ local function renderNetCode(ui)
     local half = math.max(1, math.floor((ui.w - 3) / 2))
     button(ui, 2, ui.h, half, "HIDE", colors.gray, function() ui.view = "net" end)
 end
+
+-- Updates screen ----------------------------------------------------------------
+local SET_OF = { turtle = "m", relay = "r", server = "s", pocket = "s" }
+local function updLines(ui)
+    local L = {}
+    local E = T.mesh
+    local function add(t, c) L[#L + 1] = { t, c or colors.white } end
+    if not E then
+        add(S.network and "No mesh (tmmesh.lua missing)" or "NO NETWORK: run `setup network`", colors.red)
+        return L
+    end
+    local my = E.summary()
+    local us = E.stateText()
+    add("This #" .. S.myId .. " v" .. tostring(T.myVersion()) .. (us and ("  " .. us) or "  up to date"),
+        us and colors.yellow or colors.lime)
+    for _, m in ipairs(E.badList()) do
+        local ids = {}
+        for _, id in ipairs(m.ids or {}) do
+            local n, v = T.Mesh.splitId(tostring(id))
+            ids[#ids + 1] = n and (T.Mesh.shortName(n) .. " " .. v) or tostring(id)
+        end
+        add("! update " .. table.concat(ids, ",") .. " rolled back on #" .. tostring(m.by) .. ": " .. tostring(m.reason),
+            colors.orange)
+    end
+    if S.pullMsg then add(S.pullMsg, colors.yellow) end
+    if ui.msg then add(ui.msg, colors.yellow) end
+    local ids = {}
+    for id in pairs(S.devs) do ids[#ids + 1] = id end
+    table.sort(ids)
+    local t = T.now()
+    for _, id in ipairs(ids) do
+        local d = S.devs[id]
+        local k = SET_OF[d.kind]
+        local state
+        if d.us then state = d.us
+        elseif not k or not my[k] or type(d.vs) ~= "table" or not d.vs[k] then state = "-"
+        elseif d.vs[k] == my[k] then state = "same"
+        else state = "differs" end
+        local age = math.floor((t - (d.at or 0)) / 1000)
+        add("#" .. id .. " " .. tostring(d.kind) .. " v" .. tostring(d.ver or "?") .. " " .. state
+            .. (age > 120 and (" (" .. math.floor(age / 60) .. "m ago)") or ""),
+            state == "same" and colors.lightGray or (state == "differs" and colors.orange or colors.white))
+    end
+    return L
+end
+
+local function renderUpdates(ui)
+    header(ui, "Updates", nil, false)
+    local defs = {
+        { "CHECK NOW", colors.green, function() T.checkNow(); ui.msg = nil end },
+        { "BACK", colors.gray, function() ui.view = "list"; ui.msg = nil end },
+    }
+    local lines = updLines(ui)
+    local top = buttonGrid(ui, defs, 2, #lines)
+    for i, l in ipairs(lines) do
+        if 1 + i >= top then break end
+        put(ui, 1, 1 + i, trunc(l[1], ui.w), l[2])
+    end
+end
+T.VIEWS.updates = renderUpdates
 
 T.cmdDefs, T.numKey, T.numOk, T.wrap = cmdDefs, numKey, numOk, wrap
 T.VIEWS.net, T.VIEWS.netconfirm, T.VIEWS.netcode = renderNet, renderNetConfirm, renderNetCode

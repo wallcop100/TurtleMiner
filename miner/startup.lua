@@ -1,9 +1,22 @@
--- Version: 1.1.1
--- TurtleMiner turtle startup. Checks for updates only when the turtle is at
--- home (or has no state yet), reboots at most once after an update, then
--- starts the miner. Nothing here ever waits for input.
+-- Version: 2.0.0
+-- TurtleMiner turtle startup. Installs a fetched mesh update only when the turtle is at
+-- home (or has no state yet), reboots at most once after an update, then starts the miner.
+-- Nothing here waits for input (except the one-time network prompt, 60 s).
+-- Update probation (tmguard.lua): an interrupted install is finished first; a crash of the
+-- miner, or more than 2 extra reboots, right after an update puts the old files back.
 
 local GUARD = ".tm_updated"   -- exists for exactly one boot after an update
+
+local guard = nil
+do
+    local fn = fs.exists("tmguard.lua") and loadfile("tmguard.lua", nil, _ENV)
+    local ok, g = pcall(fn or error)
+    if ok and type(g) == "table" then guard = g end
+end
+if guard then
+    local ok, err = pcall(guard.boot)
+    if not ok then print("[update] guard: " .. tostring(err)) end
+end
 
 local function readFile(path)
     if not fs.exists(path) then return nil end
@@ -59,7 +72,8 @@ local function autoUpdate()
     local okHome, home = pcall(atHome)
     if not okHome or not home then return false end
     local ok, updated = pcall(function()
-        return require("updater").run({ log = function(s) print("[update] " .. s) end })
+        -- Only what the mesh already fetched (no network wait at boot).
+        return require("updater").run({ stagedOnly = true, log = function(s) print("[update] " .. s) end })
     end)
     if not ok then
         print("[update] failed: " .. tostring(updated))
@@ -88,4 +102,4 @@ do
     local hasModem = peripheral and peripheral.find and peripheral.find("modem") ~= nil
     if okJ and J.bootPrompt and hasModem then J.bootPrompt({ timeout = 60 }) end
 end
-shell.run("miner")
+if guard then guard.run("miner") else shell.run("miner") end

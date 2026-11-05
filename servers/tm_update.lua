@@ -1,9 +1,12 @@
--- Version: 1.0.0
--- TurtleMiner server, update role (a PC with a /files/ folder): serves the files in it to
--- turtles (update_check -> update_manifest, file_get -> file; docs/PROTOCOL.md) and pulls
--- newer files from GitHub at boot and every tminer.pull_minutes (github_pull.lua, optional).
--- Same behaviour as the stand-alone update_server.lua. In a cluster only the lowest-ID PC
--- with /files/ answers (T.updateServes in tm_cluster.lua), so a turtle gets one reply.
+-- Version: 2.0.0
+-- TurtleMiner server, update role (a PC with a /files/ folder: the turtles' and relays' files).
+-- Mesh updates (tmmesh.lua) do the spreading; this part is the GitHub origin:
+--   * pull at boot, every tminer.pull_minutes (default 60) and on "Check now" (`pull_req`
+--     from any device; only the lowest-ID live PC with HTTP + /files/ answers, `pull_res`);
+--     every newer file that compiles becomes a signed release (tmmesh originate) and spreads
+--   * legacy: turtles with the old updater (1.x) still get files the old way once
+--     (update_check -> update_manifest, file_get without `sha` -> file), so they can upgrade
+--     to the mesh. In a cluster only the lowest-ID PC with /files/ answers.
 local T = ...
 local S = T.S
 
@@ -46,7 +49,7 @@ function U.manifest(role)
     for _, name in ipairs(fs.list(dir)) do
         local path = dir .. name
         if not fs.isDir(path) and safeName(name) and not name:match("%.bak$") and not name:match("%.new$")
-            and not name:match("%.tmp$") then
+            and not name:match("%.tmp$") and name ~= "relay.lua" and name ~= "relay_startup.lua" then
             local f = fs.open(path, "r")
             if f then
                 local v = versionOf(f.readLine())
@@ -100,27 +103,41 @@ local function puller()
     return U.puller
 end
 
+function U.hasPuller() return puller() ~= false end
+
+-- Pull from GitHub into the mesh. Returns ok, number of new releases, err.
 function U.pull()
     local p = puller()
-    if not p then return end
+    local E = T.mesh
+    if not p then return false, 0, "github_pull.lua missing" end
+    if not E then return false, 0, "no mesh (network or tmmesh.lua missing)" end
     local log = function(s) T.logLine("update: " .. s) end
-    local ok, changed, serverChanged, err = pcall(p.pull, U.dir(), log)
-    if not ok then log("pull error: " .. tostring(changed)) return end
-    if err then log(err) end
-    if #changed > 0 then log(#changed .. " file(s) updated from GitHub") end
-    if serverChanged then
-        local guard = ".pull_reboot"
-        local last = tonumber(T.readFile(guard) or "")
-        if not last or os.epoch("utc") - last > 120000 then
-            T.writeAtomic(guard, tostring(os.epoch("utc")))
-            log("server programs updated, rebooting")
-            sleep(1)
-            os.reboot()
+    E.ensureScan(function() sleep(0) end)
+    local ok, list, err = pcall(p.fetchNewer, E.names(), function(name) return E.heldVersion(name) end, log)
+    if not ok then log("pull error: " .. tostring(list)); return false, 0, tostring(list) end
+    local n, names = 0, {}
+    for _, f in ipairs(list) do
+        local okO, why = E.originate(f.name, f.body)
+        if okO then
+            n = n + 1
+            names[#names + 1] = (T.Mesh and T.Mesh.shortName(f.name) or f.name) .. " " .. f.version
+        elseif why ~= "not newer" then
+            log("pull: " .. f.name .. " " .. f.version .. ": " .. tostring(why))
         end
     end
+    U.lastPull = { at = T.now(), n = n, err = err }
+    if n > 0 then
+        log("GitHub: " .. table.concat(names, ", "))
+        E.announce()
+    elseif err then
+        log("GitHub: " .. err)
+    end
+    T.markDirty()
+    return true, n, err
 end
 
--- Loop for the update role: pull at start, then every tminer.pull_minutes (0 = boot only).
+-- Loop for the update role: pull at start, every tminer.pull_minutes (0 = boot only) and
+-- when asked (Check now / pull_req).
 function U.loop()
     if not U.pulledAtBoot then
         U.pulledAtBoot = true
@@ -128,8 +145,23 @@ function U.loop()
     end
     local p = puller()
     local m = p and p.interval and p.interval() or 0
+    local nextAt = m > 0 and (T.now() + m * 60000) or math.huge
     while true do
-        if m <= 0 then sleep(3600) else sleep(m * 60); U.pull() end
+        sleep(1)
+        local want = U.pullWanted
+        if want or T.now() >= nextAt then
+            U.pullWanted = nil
+            local ok, n, err = U.pull()
+            if m > 0 then nextAt = T.now() + m * 60000 end
+            if want then
+                if want.from == S.myId then
+                    S.pullMsg = ok and ("pulled: " .. n .. " new file(s)" .. (err and (" (" .. err .. ")") or "")) or ("pull failed: " .. tostring(err))
+                    T.markDirty()
+                else
+                    T.send("pull_res", want.from, { ok = ok, n = n, err = err })
+                end
+            end
+        end
     end
 end
 

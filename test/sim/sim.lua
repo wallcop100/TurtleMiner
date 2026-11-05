@@ -494,7 +494,11 @@ function sim.newNet()
         for _, m in ipairs(ep.modems) do if m.side == side then r.modems[#r.modems + 1] = m end end
         return r
     end
+    net.gpsAnswers = {}   -- every GPS answer {time, from, pos} (reply on the GPS channel, 3 numbers)
     function net.transmit(c, ch, reply, msg, fromSide)
+        if reply == 65534 and type(msg) == "table" and #msg == 3 then
+            net.gpsAnswers[#net.gpsAnswers + 1] = { time = sim.now, from = c.id, pos = { msg[1], msg[2], msg[3] } }
+        end
         local src = sim.endpoint(c, false)
         if fromSide then src = only(src, fromSide) end
         for _, o in ipairs(sim.computers) do
@@ -516,8 +520,9 @@ function sim.newNet()
                 if ok and dist then
                     for side, chs in pairs(c.channels) do
                         if chs[reply] then
+                            local say = h.says or h.pos     -- h.says: a host that lies about where it is
                             sim.queue(c, sim.now + net.latency, { "modem_message", side, reply, 65534,
-                                { h.pos.x, h.pos.y, h.pos.z }, dist, n = 6 })
+                                { say.x, say.y, say.z }, dist, n = 6 })
                         end
                     end
                 end
@@ -609,6 +614,7 @@ end
 -- Resume a computer with one event.
 local function deliver(c, args)
     if not c.alive then return end
+    if c.frozen then c.frozenQ[#c.frozenQ + 1] = args; return end
     local name = args[1]
     if name ~= "sim_start" and c.filter ~= nil and c.filter ~= name and name ~= "terminate" then return end
     if name == "timer" and c.cancelled[args[2]] then return end
@@ -714,6 +720,22 @@ function sim.boot(t, args, opts)
     start(c)
     if opts.background then return c end
     return sim.run({ stopOn = c, untilFn = opts.untilFn, maxTime = opts.maxTime, maxTicks = opts.maxTicks })
+end
+
+-- Unloaded chunk: the computer stops running (events are held) but a turtle stays in the world
+-- as a block. thaw() delivers what was held.
+function sim.freeze(t)
+    local c = t.computer or t
+    c.frozen = true
+    c.frozenQ = c.frozenQ or {}
+end
+
+function sim.thaw(t)
+    local c = t.computer or t
+    c.frozen = false
+    local q = c.frozenQ or {}
+    c.frozenQ = {}
+    for _, a in ipairs(q) do sim.queue(c, sim.now, a) end
 end
 
 -- Kill a running computer (like breaking it / chunk unload without a save).

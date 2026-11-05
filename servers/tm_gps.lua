@@ -651,7 +651,7 @@ function G.status()
     if V.st == "asking" then return "GPS F3?", true end
     if V.st == "setup" then return "GPS setup", true end
     if V.never then return "GPS never", false end
-    if n < 4 then return "GPS " .. n .. "/4pc", false end
+    if n < 4 then return "GPS " .. n .. "/4+pc", false end
     return "GPS layout?", false   -- enough PCs, but too flat/close (see V.note)
 end
 function G.statusLong()
@@ -659,7 +659,7 @@ function G.statusLong()
     local n = #eligible(now())
     local lines = { short }
     if V.st ~= "on" and n < 4 then
-        lines[#lines + 1] = n .. " PC(s) with a wireless/ender modem in this cluster; GPS needs 4,"
+        lines[#lines + 1] = n .. " PC(s) with a wireless/ender modem in this cluster; GPS needs 4 or more,"
         lines[#lines + 1] = "spread out and not all at one height."
     end
     if V.note then lines[#lines + 1] = tostring(V.note) end
@@ -780,7 +780,7 @@ local function renderGps(ui)
     else
         add("Not running" .. (V.later and " (later)" or ""), colors.lightGray)
         local n = #eligible(now())
-        add(n .. " PC(s) with a wireless/ender modem here; needs 4,", n >= 4 and colors.white or colors.orange)
+        add(n .. " PC(s) with a wireless/ender modem here; needs 4 or more,", n >= 4 and colors.white or colors.orange)
         add("spread out, not all at one height.", colors.lightGray)
     end
     if V.note then add(V.note, colors.orange) end

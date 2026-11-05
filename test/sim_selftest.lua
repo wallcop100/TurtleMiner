@@ -263,6 +263,29 @@ return {
         r = sim.boot(t, { "sub/prog2" })
         ok(r.status == "exit" and r.ret[1] == "root", "package.path '/?.lua' must reach root modules: %s %s", r.status, tostring(r.err))
 
+        -- 9c. one turtle per cell, collisions recorded, frozen turtle keeps running nothing ----
+        sim.reset()
+        w = sim.world()
+        w:set(0, 0, 0, "air"); w:set(0, 0, -1, "air")
+        t = sim.turtle(w, { id = 21, pos = { x = 0, y = 0, z = 0 }, facing = 0 })
+        local t2 = sim.turtle(w, { id = 22, pos = { x = 0, y = 0, z = -1 }, facing = 0 })
+        t.fs:write("bump.lua", "local a = turtle.forward(); local b, i = turtle.inspect(); local d = turtle.dig(); return a, b, i and i.name, d")
+        r = sim.boot(t, { "bump" })
+        ok(r.status == "exit" and r.ret[1] == false and r.ret[2] == true and r.ret[3] == "computercraft:turtle_normal" and r.ret[4] == false,
+            "moving into a turtle must fail like a block and inspect shows a turtle: %s %s %s %s", tostring(r.ret and r.ret[1]), tostring(r.ret and r.ret[2]), tostring(r.ret and r.ret[3]), tostring(r.err))
+        ok(#w.collisions == 1 and w.collisions[1].by == 21 and w.collisions[1].with == 22, "collision not recorded")
+        t2.fs:write("tick.lua", "while true do turtle.turnLeft() end")
+        sim.boot(t2, { "tick" }, { background = true })
+        sim.run({ maxTime = 2 })
+        local n0 = t2.ops
+        sim.freeze(t2)
+        sim.run({ maxTime = 5 })
+        ok(t2.ops <= n0 + 1, "frozen turtle kept running (%d -> %d)", n0, t2.ops)
+        ok(w:turtleAt(0, 0, -1) == t2, "frozen turtle must stay in the world as a block")
+        sim.thaw(t2)
+        sim.run({ maxTime = 2 })
+        ok(t2.ops > n0 + 1, "thawed turtle did not resume")
+
         -- 10. real repo files are installed into turtle fs -----------------------------
         sim.reset()
         w = sim.world()

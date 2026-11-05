@@ -42,6 +42,9 @@ function World.new(opts)
     w.maxY = opts.maxY or 319
     w.turtles = {}      -- list of turtle records living in this world
     w.digLog = {}       -- {x,y,z,name,by,time}
+    w.collisions = {}   -- failed moves into another turtle {time,by,with,x,y,z,frozen}
+    w.redigTries = {}   -- dig attempts on a cell another turtle already dug
+    w.dugFirst = {}     -- cell key -> id of the turtle that dug it first
     w.dropped = {}      -- items spilled into the world {name,count,x,y,z}
     w.clock = opts.clock or function() return 0 end
     return w
@@ -203,6 +206,8 @@ function World:remove(x, y, z, by)
     local c = self:cell(x, y, z)
     self.cells[key(x, y, z)] = { name = AIR }
     self.digLog[#self.digLog + 1] = { x = x, y = y, z = z, name = c.name, by = by, time = self.clock() }
+    local k = key(x, y, z)
+    if self.dugFirst[k] == nil then self.dugFirst[k] = by or false end
     self:fall(x, y, z)
     self:dropHanging(x, y, z)
     return c
@@ -219,6 +224,25 @@ function World:dugCells(by)
         if not d.rollback and (by == nil or d.by == by) then
             local k = key(d.x, d.y, d.z)
             if not r[k] then r[k] = d end
+        end
+    end
+    return r
+end
+
+function World:dugBy(x, y, z)
+    local v = self.dugFirst[key(x, y, z)]
+    if v == false then return nil end
+    return v
+end
+
+-- Cells dug more than once (a block came back, e.g. gravel/placed): list of {key, n}.
+function World:redug()
+    local n, r = {}, {}
+    for _, d in ipairs(self.digLog) do
+        if not d.rollback then
+            local k = key(d.x, d.y, d.z)
+            n[k] = (n[k] or 0) + 1
+            if n[k] == 2 then r[#r + 1] = k end
         end
     end
     return r

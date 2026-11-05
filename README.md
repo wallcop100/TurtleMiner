@@ -2,7 +2,7 @@
 
 Branch mining for CC:Tweaked turtles that keeps going on its own. Turtles save their position before every move, survive server restarts and chunk unloads, burn the coal they find, and say plainly when they need help. A monitor (computer screen, monitor wall or pocket computer) shows the whole fleet and sends commands. It works with no modem at all, basic modems, ender modems, wired networks, or any mix, on basic or advanced hardware. Everything is detected automatically; settings only override.
 
-> Status: the turtle, monitor, comms, update server, server clustering and the mining network (signed messages) are done and tested in a simulator (56 scenarios). **The GPS setup offer is done; mesh updates are being built** (sections marked *coming*). Nothing here has been signed off in a live world yet; please report what you see.
+> Status: the turtle, monitor, comms, server clustering, the mining network (signed messages), mesh updates (with automatic rollback) and the GPS setup offer are done and tested in a simulator. Nothing here has been signed off in a live world yet; please report what you see.
 
 Contents: [Quick start](#quick-start) · [What you need](#what-you-need) · [Install](#install) · [Using it](#using-it) · [Networking](#networking) · [GPS](#gps) · [Clustering](#clustering) · [Mining network](#mining-network) · [Updates](#updates) · [Settings](#settings) · [Phases and help messages](#phases-and-help-messages) · [Troubleshooting](#troubleshooting) · [For developers](#for-developers)
 
@@ -265,7 +265,7 @@ Without questions: `install --default --join <4 words> [--name <name>]`, `instal
 
 **Later:** `install --network` (turtle) or `setup network` (computer) joins another network; reboot afterwards. The monitor's **NET** screen shows the network name, the count of foreign/bad messages dropped, join requests, and (after a confirmation) the 4 words. The footer shows `bad:n` when foreign or forged messages were dropped, `NO NETWORK` when the PC has none.
 
-**What it protects:** commands, status, homes, the cluster's data and updates. A message that is unsigned, signed with another key, changed on the way, replayed, or more than 10 minutes old or in the future is dropped and never relayed. The turtle's updater only installs files from its own network's update server.
+**What it protects:** commands, status, homes, the cluster's data and updates. A message that is unsigned, signed with another key, changed on the way, replayed, or more than 10 minutes old or in the future is dropped and never relayed. Devices only install releases signed by their own network.
 
 **What it doesn't:** GPS (CC's GPS protocol can't be signed; a fake GPS host could still give wrong positions; turtles check fixes against their journal), and anyone who learns the 4 words, gets the disk, or is listening during an approve. The words come from a 1024-word list (about 40 bits) and the key is derived slowly, but CC has no strong random source: don't reuse a phrase you've shown in public. Messages are signed, not encrypted: others can still read them.
 
@@ -273,22 +273,44 @@ Without questions: `install --default --join <4 words> [--name <name>]`, `instal
 
 Cost: signing a status message takes about 9 SHA-256 blocks (a few ms); joining derives the key once (about 1 s). Turtles without a modem do no signing at all.
 
-### Mesh updates *(coming)*
-
-Planned (`docs/MESH_UPDATE_PLAN.md`): updates spread device to device over the mesh: pull from GitHub (hourly, at boot, or **Check now** on the monitor) or edit a file by hand on any computer, and every device updates itself (turtles at home, computers when idle, one reboot each). An update that makes a device crash is rolled back automatically and blocked across the network.
-
 ---
 
 ## Updates
 
-- The **update server** (part of `setup server`) serves the files in `/files/` to turtles. Each file's first line is `-- Version: x.y.z`; a turtle installs a file only if the server's version is higher, after checking it loads. If any file fails, nothing is replaced. The old file stays as `<name>.bak`.
-- Turtles update **only at home**: at boot, or after `UPDATE` (next time they're home, then they carry on). They reboot at most once per update.
-- **GitHub auto-pull**: the update server checks GitHub at boot and every 60 minutes and copies in any newer file that compiles, including its own programs (then it reboots once). Settings on the server computer:
-  - `set tminer.pull_minutes 0`: only at boot
-  - `set tminer.auto_pull false`: off
-  - `set tminer.repo_base <raw URL ending in />`: another branch, e.g. `main` after merging
-- Pocket computers and extra monitors don't auto-pull: re-run their `setup` line.
-- Check what a turtle would get: `updater --check` on the turtle.
+**What you do: nothing.** Updates spread by themselves from device to device. When you edit a file by hand, bump the `-- Version: x.y.z` on its first line; that's all.
+
+**How an update spreads**
+- A new version comes from **GitHub** (a server computer with `/files/` and HTTP checks at boot and every 60 minutes, or at once with **Check now**) or from a **hand edit** on any device (checked at boot and every 10 minutes: a file whose version is higher than what the network knows, and that compiles, is released).
+- Whoever has the new version signs a **release note** (name, version, SHA-256, size) with the network key. Every device mentions a tiny version summary in the messages it already sends; a device that hears a different one asks for the list and fetches what is newer, in 16 KB pieces, one transfer at a time. Every device that has a file passes it on: turtles, server computers, pockets and relays all serve what they hold, across wired, wireless and ender modems.
+- A device installs only files for its own role (turtle, server/pocket, relay), only with a valid release note, and only if the SHA-256 matches and the file compiles. Files from other players' networks, unsigned or changed on the way, are ignored.
+- A device that was out of range catches up the next time it is heard.
+
+**When it installs**
+- **Turtles**: only at home, between trips (or while IDLE/DONE at home). One reboot, then they carry on with what they were doing. Never mid-trip.
+- **Computers and pockets**: when nobody has touched them for 30 s and no command is waiting for an answer. One reboot.
+- **Relays**: at once. One reboot.
+- All or nothing: every file of an update is fetched and checked first; each replaced file is kept as `<name>.bak`. A power cut in the middle finishes the same install at the next boot.
+
+**Rollback**
+- For 5 minutes after an update (turtles: until their first trip home, or 10 minutes at home) a device is on probation. If it crashes, fails to start, or reboots more than twice, it puts the `.bak` files back, reboots into the old version and marks the release **bad** (signed, with the reason).
+- The bad mark spreads like an update: devices that haven't installed it skip it, devices that already run it roll back too. The monitor log says `update tm_views.lua 1.3.0 rolled back on #12: crash: ...`, the footer shows `UPD!`.
+- Fix the file and bump its version: the newer version clears the mark and spreads as usual.
+
+**On the monitor**: **UPD** (footer) opens the UPDATES screen: this computer's version and what its update is doing, rolled-back releases, every device heard with its version and `same` / `differs` / what it is doing (`get nav.lua`, `ready`, `probation`), and **CHECK NOW** (Tab to it, Enter). Check now asks the server computer with HTTP to pull from GitHub at once; the result shows on the screen and the files spread by themselves.
+
+**Commands**
+- `updater --check` (any device): what would be installed.
+- `updater` (any device): fetch and install now, then reboot yourself.
+- `updater --pull` (any computer): ask the server computer with HTTP to pull from GitHub now.
+- `UPDATE` on a turtle's card: next time it's home it asks the network and installs, then carries on.
+
+**Settings** on the server computer with `/files/`:
+- `set tminer.pull_minutes 0`: GitHub only at boot (and Check now)
+- `set tminer.auto_pull false`: no GitHub at all (hand edits still spread)
+- `set tminer.repo_base <raw URL ending in />`: another branch, e.g. `main` after merging
+- On a turtle, `set tminer.AUTO_UPDATE false` stops it installing by itself (`UPDATE` still works).
+
+**Upgrading from before mesh updates:** turtles with the old updater get the new files once the old way from the server's `/files/`; computers and relays: run their `setup` line once more.
 
 ---
 
@@ -313,7 +335,7 @@ Turtle settings live under `tminer.<KEY>`. Change them with `install`, `set tmin
 | `FUEL_TARGET` | 5000 | yes | Refuel to this at home |
 | `BURN_COAL` | true | yes | Burn mined coal below `FUEL_TARGET` |
 | `STATUS_INTERVAL` | 10 | yes | Seconds between status messages (in contact) |
-| `AUTO_UPDATE` | true | yes | Check for updates at boot when at home |
+| `AUTO_UPDATE` | true | yes | Install mesh updates by itself (at home, between trips) |
 | `SURFACE_IF_LOST` | false | yes | Lost position: dig up to the surface and wait |
 | `SNAPSHOT_EVERY` | 100 | no | Moves between full state saves (the journal covers the rest) |
 | `STUCK_TIMEOUT` | 60 | no | Seconds without progress before a move gives up |
@@ -363,7 +385,7 @@ Turtle settings live under `tminer.<KEY>`. Change them with `install`, `set tmin
 - **Turtle not on the monitor**: does it have a modem? It may just be out of range (`AWAY`). Basic modems reach 64 blocks; use a relay or an ender modem for more.
 - **Monitor shows `LATE!`**: the turtle is well past its expected return. Check its screen or go and look; commands are queued meanwhile.
 - **Commands affect the wrong turtle**: they can't; each command carries the turtle's ID.
-- **Turtle doesn't update**: it updates only at home. `updater --check` shows what the server offers; the server needs a higher version on the file's first line.
+- **Turtle doesn't update**: it installs only at home, between trips. `updater --check` shows what the network offers; a file needs a higher version on its first line. The monitor's UPDATES screen shows each device's state; `UPD!` means a release was rolled back somewhere (see the log line for the reason).
 - **Moved a turtle by hand**: put it on its home spot and press `H` twice (or RESET HOME). For a new home, run `install` there and answer yes to "new home spot".
 - **Start over**: RESET JOB, then RESUME.
 - **A GPS turtle says no GPS underground**: normal with basic-modem hosts; it works blind down there.
@@ -375,5 +397,5 @@ Turtle settings live under `tminer.<KEY>`. Change them with `install`, `set tmin
 - Layout: `miner/` (turtle: `miner.lua` main loop, `nav.lua` movement and recovery, `state.lua` journal and saves, `inv.lua` fuel and storage, `mine.lua` grid and veins, `net.lua` comms, `config.lua` settings, `install.lua`, `updater.lua`, `startup.lua`), `servers/` (monitor, update server, relay), `setup.lua`, `test/` (simulator), `docs/`.
 - Tests: `lua5.4 test/run.lua` runs every scenario in a simulated CC world (modem ranges, GPS, chunks, crashes, world rollback). `lua5.4 test/run.lua 37` runs one.
 - Design and progress: `docs/PLAN.md`, `docs/INTERFACES.md`, `docs/PROTOCOL.md`, `docs/COMMS.md`, `docs/CLUSTER_GPS_PLAN.md`, `docs/ARMY_PLAN.md`, and `docs/TRACKING.md` (what's done, open items, the in-game checklist).
-- Every file starts with `-- Version: x.y.z`; bump it when you change the file or the updater won't ship it.
+- Every file starts with `-- Version: x.y.z`; bump it when you change the file or mesh updates won't ship it. File sets per role: `tmmesh.SETS` in `miner/tmmesh.lua` (setup.lua keeps its own copy; scenario 61 checks they agree).
 - `farmer/` is a separate older program, not covered here.
