@@ -1,4 +1,4 @@
--- Version: 1.4.1
+-- Version: 1.4.2
 -- One-shot downloader. Usage (in CC, needs the HTTP API enabled):
 --   wget run <BASE>/setup.lua server    -- any server PC: tminer_server + update files (/files/)
 --   wget run <BASE>/setup.lua monitor   -- server PC without update files (same program)
@@ -15,7 +15,7 @@
 -- server with /files/) and the PCs form one cluster with one leader.
 -- BASE = https://raw.githubusercontent.com/wallcop100/TurtleMiner/<branch>
 
-local BRANCH = "claude/vigilant-pasteur-g2krss"
+local BRANCH = "main"
 local BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/" .. BRANCH .. "/"
 
 local MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "net.lua",

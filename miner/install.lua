@@ -1,4 +1,4 @@
--- Version: 1.3.0
+-- Version: 1.3.1
 -- TurtleMiner installer. The only program that asks questions.
 --
 --   install              join a mining network (first time), check hardware, fetch missing
@@ -21,7 +21,7 @@ package.path = "/?.lua;/?;" .. package.path
 local args = { ... }
 local USE_DEFAULTS, NETWORK_ONLY = false, false
 local NET_FILES = { "tmcrypto.lua", "tmwords.lua", "tmjoin.lua" }
-local BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss/"
+local BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/main/"
 
 -- Network flags are parsed by tmjoin (loaded below); keep the rest here.
 local netArgs = {}

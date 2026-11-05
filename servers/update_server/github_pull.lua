@@ -1,4 +1,4 @@
--- Version: 1.3.0
+-- Version: 1.3.1
 -- Pulls newer TurtleMiner files from GitHub into the update server's folder
 -- (and the server's own programs). Used by update_server at boot and every
 -- tminer.pull_minutes (default 60, 0 = boot only).
@@ -13,7 +13,7 @@
 
 local M = {}
 
-M.DEFAULT_BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss/"
+M.DEFAULT_BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/main/"
 
 M.MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "net.lua",
             "miner.lua", "updater.lua", "install.lua", "startup.lua",

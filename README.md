@@ -10,7 +10,7 @@ Contents: [Quick start](#quick-start) · [What you need](#what-you-need) · [Ins
 
 ## Quick start
 
-All commands need CC's HTTP API (on by default). `BASE` below means `https://raw.githubusercontent.com/wallcop100/TurtleMiner/claude/vigilant-pasteur-g2krss` (will become `.../main` once merged).
+All commands need CC's HTTP API (on by default). `BASE` below means `https://raw.githubusercontent.com/wallcop100/TurtleMiner/main`.
 
 1. **Main computer** (with a modem; a monitor is optional):
    ```
