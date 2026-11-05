@@ -22,49 +22,45 @@ Basic modems reach 64 blocks, so with no ender modem turtles only talk to the ma
 - The **up** reservation needs contact at the bottom: a relay at the shaft bottom, any ender modem in the network (hub), or, with neither, **timed slots** agreed before leaving (turtle gets "up-shaft window at T+n min"; it waits at the bottom until its window).
 - Turtle-to-turtle relaying helps only within 64 blocks and is never relied on.
 
+## Decisions (approved 2026-11-05)
+| Topic | Decision |
+|-------|----------|
+| Entry tunnel | One shared 1x1 shaft from the station; turtles take turns by direction in convoys. The coordinator digs a **second shaft** (down/up) automatically when queues get long |
+| Army setup | **Wizard on the monitor**. Station given by **typed coordinates** (X Y Z + facing). Wizard asks **depth (TARGET_Y) and ore focus**; everything else defaults and is editable later |
+| Area | **Ever-growing from an origin** (the station). No size setting: the coordinator keeps adding corridors outward, nearest-first |
+| UI | **Top-down map**, **traffic view**, **army stats** (plus the existing list/alerts) |
+| Mined knowledge | **Branch progress + reported extra digs** (veins, detours) — no per-block map |
+| Avoid | Army turtles avoid **solo turtles** (their planned grids) and **turtles without modems** (treated as obstacles: wait, never dig) |
+
 ## How it works
 
-### 1. Groups
-- A group = one shared station (shaft top, loot chest, optional fuel chest) + one shared grid. Stored on the server, not on turtles.
-- Setting `tminer.GROUP` (empty = solo, same as today). `JOIN <group>` / `LEAVE` commands from the monitor, or `install --group <name>`.
-- Joining: the turtle drops its solo job (progress kept in case it leaves again), goes home, then goes to the group station. With a GPS fix it walks there; without GPS the monitor tells you to carry it to the station and press RESET_HOME there.
+### 1. Shared entry tunnel (station + shaft)
+- Station = typed origin `(x,y,z,facing)`. The shaft column is one block **in front** of the station spot (keeps the chest-behind/beside rule; the station spot stays free for unloading).
+- Shaft split into 16-block **segments**; a segment holds a direction (down/up) and any number of turtles going that way (convoy); flips only when empty.
+- Out of contact (basic modems): the **up** trip uses a **timed slot** booked before leaving; with a relay at the shaft bottom or any ender modem, live reservations instead.
+- Second shaft: coordinator measures average wait; above a threshold (default 60 s) it assigns the next free turtle a "dig up-shaft" job next to the first; once done, shaft 1 = down, shaft 2 = up, no direction flips.
+- Station queue: one turtle at the station spot at a time (unload, refuel), others wait in the up-shaft below; full chest = one army alert, all wait.
 
-### 2. Coordinator (on the server)
-- New module in the server: owns each group's grid (same layout as today: shaft, spine, corridors, branches).
-- Hands out **branch claims** (`corridor, branch, side`) to turtles that ask. A turtle mines only its claimed branch, reports progress, asks for the next.
-- **Nothing held by a silent turtle is reassigned automatically.** With no chunk loaders, a silent turtle is usually just unloaded and still physically in its tunnel; sending another turtle there would block both. You release it with a `RELEASE <turtle>` command once you've found it.
-- The grid is kept compact by default (`GROUP_RADIUS`, default 64 blocks from the shaft) so it stays inside the area loaded around the player and inside underground GPS range (section 4).
+### 2. Army setup (wizard)
+- Monitor: `NET > ARMY > New`: name, station X Y Z, facing (N/E/S/W), TARGET_Y, FOCUS. Validates coordinates are integers and Y above TARGET_Y.
+- Joining: place a turtle **at the station spot** and press JOIN on its card (or `install --army <name>`, or key `J` on the turtle). A turtle at the station adopts the station's **world coordinates** as its home, so turtles **without GPS** work in world coordinates too. GPS turtles elsewhere can walk there.
+- Leaving: LEAVE → it finishes its branch, returns, unloads, drops back to solo at its old home (kept).
+- Settings stored on the leader (replicated in the cluster DB); turtles get them with each claim, so changing them on the monitor applies at the next claim.
 
-### 3. Traffic reservations
-- Shared lanes are split into **segments**: the shaft (one segment per 16 blocks), the spine and each corridor main (16-block segments). Branches don't need locks: each is owned by one claim.
-- A turtle asks the coordinator for the segments ahead before entering, holds them while inside, releases behind it.
-- **Direction locks, not one-at-a-time:** a segment can hold several turtles going the same way (a convoy). It flips direction only when empty. Without this a 1-wide, ~200-block shaft would be the bottleneck at 20 turtles (one trip each way takes about 80 s).
-- Turtles never dig or attack another turtle (already true after WP-F). If one is in the way despite the locks, the turtle waits, reports `WAITING` with the blocker's ID, and after a timeout goes `NEEDS_HELP`.
-- Server offline → turtles finish the segment they're in and wait at the next lane entry (no movement through shared lanes without a reservation).
+### 3. Ever-growing grid + shared knowledge
+- Grid in the station frame: spine and corridors as today (`miner/mine.lua` layout), but corridors are created **on demand in both directions** (right and left of the spine, then further), nearest unclaimed branch first, so travel stays short.
+- Coordinator keeps per branch: `free | claimed(turtle, since) | done(step)` plus a list of **extra digs** (cells off the grid: vein cells, detours) reported by turtles in their `catchup`/status when back in contact.
+- A turtle mines only its claimed branch; before a vein step into a cell already in the extra-digs list it skips it (that ore is gone).
+- **Never reassign a silent turtle's branch or segment** (it is probably frozen in place); `RELEASE` on the monitor frees it.
+- Solo turtles: their planned grid (home + facing + geometry, already in status) is registered; the army's grid skips overlapping branches; a solo turtle installed overlapping an army is shifted/warned.
+- Unknown turtle in the way (no modem, other network): wait, never dig/attack it; after timeout report `blocked by unknown turtle at x,y,z`.
 
-### 4. GPS underground
-- **GPS can't be relayed over rednet.** A fix is worked out from how far away each host's reply came from, so relayed replies give wrong positions. Turtles without ender modems therefore need GPS hosts within wireless range (about 64 blocks underground, less in storms).
-- **GPS nodes:** 4 computers with wireless modems, placed by you near the shaft bottom at mining depth, spread out and not all on one level. New program `gpsnode`:
-  - gets its own position from your surface GPS (attach an ender modem once, or it asks you to type the coordinates from F3),
-  - saves it and runs `gps host` on boot,
-  - reports its health to the server (the monitor shows "GPS nodes 4/4").
-- `setup.lua gpsnode` installs it.
-- With every turtle in GPS range, crash recovery becomes reliable (position from GPS, facing from a one-block probe). This also closes the remaining "facing unknown after crash" gap.
-
-### 5. Bridge mode (both)
-- **Turtle relay (automatic, every turtle):** each turtle keeps its hop distance to the server: 0 hops if it heard the server directly in the last 30 s, otherwise 1 + the lowest distance it hears from other turtles (distance is carried in every message). A turtle relays a message only if that moves it closer to where it's going: upward traffic if its distance is lower than the sender's, server traffic if its distance is lower than the recipient's last known distance. Same dedupe + hop limit as the server, plus a small random delay. This keeps 20 turtles from all rebroadcasting everything. Ender-modem turtles naturally end up as the 0-hop gateways. `tminer.RELAY=false` turns it off for a turtle.
-- **Fixed relays:** new small `relay` program (the relay part of `central_monitor`, no UI). `setup.lua relay` installs it. Place one at the shaft bottom; a GPS node computer can run it as well.
-- The monitor shows each turtle's path to the server (direct / via relay N / via turtle N).
-
-### 6. Shared chest station
-- Station = shaft top. Loot chest and optional fuel chest beside it (same detection as today).
-- Unloading is part of the shaft reservation: the turtle at the top unloads, refuels, then joins the next down convoy. Others queue in the shaft below and wait.
-- A full chest → every turtle in the group waits at the station and the monitor shows one alert for the group, not 20.
-
-### 7. Monitor
-- Group view: claim map (which turtle is on which branch), lane segments and their direction, the queue at the station, GPS node health, relay paths.
-- Commands: JOIN, LEAVE, RELEASE, PAUSE GROUP, RETURN GROUP.
-- Pocket: group summary page + the existing per-turtle pages.
+### 4. UI / UX (new army page, keyboard-first, fits 26x20 up to big monitors)
+- **Map**: top-down grid around the station; one character per cell group: `#` done, `+` claimed, `.` free, `S` station/shaft, turtle digits/letters for positions with direction arrow; scroll with arrows, zoom levels by screen size.
+- **Traffic**: shaft segments with direction and occupants, station queue order, who waits for whom, slot schedule for out-of-range turtles.
+- **Stats**: ores per hour (per ore family), branches done/claimed, % done of the current ring, fuel used, turtles active/away/help.
+- **Actions**: JOIN/LEAVE (on a turtle card), RELEASE (on a claim), PAUSE ARMY, RETURN ARMY, army settings.
+- Existing list/alerts stay; army turtles grouped under their army.
 
 ## Multi-level mining (army only, decided 2026-11-05)
 
@@ -88,6 +84,73 @@ Already done elsewhere (not army work any more): bridge/relay (COMMS CM-5), GPS 
 | AR-R | Review + your in-game test | |
 
 Simulator scenarios to add: 4 and 20 turtles finish a grid with no collisions; a frozen turtle in the shaft (others wait, nothing reassigned); server restart mid-run; a solo turtle joins a running group; basic modems only (timed slots) and with a relay at the shaft bottom; full chest at the station; two solo turtles with overlapping grids get shifted apart; two solo turtles meeting head-on resolve right of way.
+
+## Contracts (batch 0) — every army agent codes against this
+
+### Frame and keys
+- **Station frame:** origin `S = {x, y, z}` (world, typed in the wizard) and facing `sf` (0 N, 1 E, 2 S, 3 W). `F` = unit vector of `sf`, `R` = `sf + 1`. A cell is written `(f, r, y)` in that frame; `toWorld(f, r, y) = S + f*F + r*R` with `y` taken as world Y. This is the same maths as `mine.toWorld` with `home = S`, `homeFacing = sf`.
+- **Station spot:** `(0, 0, S.y)`. Chests sit behind or beside it.
+- **Shafts:** shaft `k` (1 or 2) is the column at `f = 1, r = k - 1`, running from `S.y - 1` down to the deepest level. Shaft 1 is used both ways until shaft 2 exists; after that, shaft 1 is **down** and shaft 2 is **up**.
+- **Geometry `geom = {bl, sp, ml}`** (`BRANCH_LENGTH`, `BRANCH_SPACING`, `MAIN_LENGTH`) is fixed per army.
+  - `W = 2*bl + sp`.
+  - **Level** `y` (world Y, from the ore presets).
+  - **Spine** of level `y`: `f = 2`, along `R`, both directions (`r` from `-∞` to `+∞`).
+  - **Corridor** `c` (any integer, negative = left of the shaft): main at `r = c*W`, `f = 2 .. 1 + ml`.
+  - **Branch** `b >= 0`, side `"L"|"R"`: at `f = 2 + (b+1)*sp`, length `bl`.
+- **Branch key:** `"y:c:b:side"`, e.g. `"-58:-1:3:R"`. **Segment key:** `"s<k>:<i>"` for shaft `k`, 16-block segment `i` (0 = top); `"sp<y>:<j>"` for spine segment `j` of level `y` (`j` = floor(r/16), signed); `"m<y>:<c>:<i>"` for corridor mains.
+
+### Army record (leader, replicated in the cluster DB as `S.armies[name]`)
+```
+{ name, station = {x,y,z,f}, levels = { {y=-58, focus={"diamond","redstone"}}, ... },
+  geom = {bl,sp,ml}, settings = {FUEL_MARGIN, DROP_TRASH, ...},
+  shafts = { {k=1, done=true}, {k=2, done=false, digger=id|nil} },
+  members = { [turtleId] = {joined=ms, state="work"|"away"|"leaving"} },
+  branches = { [key] = {state="free"|"claimed"|"done", tid=id, since=ms, step=n} },
+  extra = { ["x,y,z"] = ms, ... },          -- off-grid cells dug (veins, detours), world coords
+  segs = { [segKey] = {dir="down"|"up"|"in"|"out", holders={[tid]=ms}} },
+  slots = { {tid, shaft=k, dir, at=ms, len=ms} },   -- timed shaft windows for turtles out of contact
+  queue = { tid, ... },                      -- station queue order
+  stats = { ores={[family]=n}, branchesDone=n, startedAt=ms, fuelUsed=n },
+  paused = bool, wait = { avgMs, n } }       -- shaft wait average (second-shaft trigger) }
+```
+
+### Messages (signed TMINER kinds; `to = "server"` = the leader)
+| kind | from → to | body |
+|------|-----------|------|
+| `army_new` | UI → leader | `name, station, ores={...}` (ore preset ids), `targetY?` (override) |
+| `army_set` | UI → leader | `name, key, value` (settings, levels add/remove, `paused`) |
+| `army_join` | turtle → leader | `name, at={x,y,z,f}` (its position; must equal the station spot) |
+| `army_leave` | turtle → leader | `name` |
+| `army_cfg` | leader → turtle | the record minus `branches/extra/segs/slots` (what a member needs) |
+| `claim_req` | turtle → leader | `name, pos, fuel` |
+| `claim` | leader → turtle | `key, level={y,focus}, geom, step, near={ "x,y,z", ... }` (extra digs within 3 blocks of the branch) or `wait=sec` / `dig_shaft=k` |
+| `claim_done` | turtle → leader | `key, step, ores={[family]=n}, extra={"x,y,z",...}, fuelUsed` |
+| `seg_req` | turtle → leader | `segs={key,...}, dir` |
+| `seg_grant` | leader → turtle | `segs={key,...}` granted, or `wait=sec` |
+| `seg_release` | turtle → leader | `segs={key,...}` |
+| `slot_req` | turtle → leader (before leaving) | `shaft, dir="up", eta=ms` |
+| `slot` | leader → turtle | `shaft, at=ms, len=ms` |
+| `station_q` | leader → turtle | `pos` (place in queue), `go=bool` |
+| `army_release` | UI → leader | `name, tid` (free a silent turtle's claim and segments) |
+
+Rules: the leader never reassigns anything held by a silent turtle (only `army_release` does). A turtle out of contact uses its booked `slot`; with contact it uses `seg_req`. Extra digs also arrive in `catchup`.
+
+### Turtle side (`miner/group.lua`)
+```
+group.init(st, cfg, nav, inv, mine, net, ctl)
+group.active() -> bool                         -- member of an army
+group.join(name) -> ok, reason                 -- only at the station spot; adopts station frame as home
+group.leave()
+group.nextJob() -> job | nil, waitSec          -- asks claim_req (or uses a cached claim when out of contact)
+group.enterLane(segs, dir) -> true | false, reason   -- blocks (calling ctl.check) until granted or slot time
+group.leaveLane(segs)
+group.reportDig(pos)                           -- off-grid cell dug
+group.jobDone(job, result)
+```
+`mine.lua` gets one hook: `opts.lane(segs, dir)` called before entering a shaft/spine/main segment and `opts.unlane(segs)` after leaving, plus `mine.runBranch(job)` that mines one claimed branch in the station frame. Without an army, the hooks are no-ops and solo mining is unchanged.
+
+### Ore presets (`levels` from the wizard)
+`diamond -58, redstone -58, lapis 0, gold -16, iron 16, copper 48, coal 96, emerald 232, ancient_debris (Nether) 15`. Levels closer than 4 blocks merge; each level's `focus` lists the ores that produced it.
 
 ## Splitting it across sub-agents
 
