@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.1.1
 -- TurtleMiner server, radio part: TMINER envelope, dedupe, modems, relaying (mesh across
 -- wired / wireless / ender, docs/COMMS.md), the turtle protocol (docs/PROTOCOL.md) and the
 -- `fleet` heartbeat. Loaded into the shared table T after tm_db.lua.
@@ -381,6 +381,10 @@ function T.handleMessage(sender, msg, protocol)
     relay(msg, hops)
 
     local k = msg.kind
+    if k:sub(1, 4) == "gps_" then      -- GPS offer / measurements / state (servers/tm_gps.lua)
+        if S.mode == "server" and T.gpsMessage then T.gpsMessage(msg) end
+        return
+    end
     if k:sub(1, 8) == "cluster_" then
         if S.mode == "server" and T.clusterMessage then T.clusterMessage(msg) end
         return
@@ -446,6 +450,7 @@ end
 function T.netLoop()
     while true do
         local ev = { os.pullEvent() }
+        if ev[1] == "modem_message" and T.gpsRaw then T.gpsRaw(ev) end   -- GPS beacons / host pings
         if ev[1] == "rednet_message" then
             T.handleMessage(ev[2], ev[3], ev[4])
         elseif ev[1] == "modem_message" and not S.inferredEnder then

@@ -1,11 +1,11 @@
--- Version: 1.1.1
+-- Version: 1.1.2
 -- TurtleMiner server: ONE program for every server PC (docs/CLUSTER_GPS_PLAN.md section 1).
 -- Each PC works out its roles at boot and every 60 s (and when a peripheral changes):
 --   monitor attached / pocket      -> UI (keyboard first; touch and mouse are extras)
 --   wireless or ender modem        -> radio gateway (talks to turtles, relays: docs/COMMS.md)
 --   wired modem                    -> cluster link (relays between wired and the air too)
 --   /files/ folder                 -> update server (+ GitHub pull)
---   wireless + GPS module present  -> GPS host (hook for tm_gps.lua, not built yet)
+--   wireless + GPS module present  -> GPS host (servers/tm_gps.lua + tm_gpssolve.lua: offer, anchor, host)
 --   always (not on a pocket)       -> cluster member: one leader owns the database, the
 --                                     others keep a replica and take over if it goes silent.
 -- The loops run side by side with `parallel` (never multishell), so a basic computer works.
@@ -52,7 +52,7 @@ local function loadModule(name, optional)
 end
 
 for _, m in ipairs({ "tm_db", "tm_radio", "tm_cluster", "tm_ui", "tm_views", "tm_update" }) do loadModule(m) end
--- GPS host (CG-3, separate work package): a tm_gps.lua that sets T.gps = {wanted(), loop()}.
+-- GPS (CG-3): the optional tm_gps.lua sets T.gps = {wanted(), loop()} and loads tm_gpssolve.lua itself.
 loadModule("tm_gps", true)
 
 local S = T.S
