@@ -70,6 +70,13 @@ Basic modems reach 64 blocks, so with no ender modem turtles only talk to the ma
 - **Each level has its own ore focus:** a level made from the diamond preset vein-mines diamond and redstone first, but still takes any ore it passes.
 - Solo turtles stay single-level (`TARGET_Y`).
 
+## Optional: GPS turtles underground (only when they can report live)
+
+- **When it's offered:** only when 4 army turtles could keep live contact from the shaft bottom. That means each has an ender modem, or a relay or ender hub reaches them at depth, detected from their hop counts at mining level. Otherwise nothing is offered, as with the GPS offer.
+- **What the turtles do:** the coordinator sends the 4 turtles to dig small pockets near the shaft bottom, spread out and at different heights. Each one already knows its exact position from its journal, so nothing has to be measured or typed. It parks there and serves GPS, reporting its health the same way PC hosts do.
+- **Losing contact:** if a GPS turtle stops being heard, it is shown as a problem on the GPS page. Turtles ignore fixes that disagree with their journal.
+- **Releasing them:** a monitor action sends them back to mining.
+
 ## Work packages
 
 Already done elsewhere (not army work any more): bridge/relay (COMMS CM-5), GPS hosting and offer (CLUSTER_GPS CG-3/4), mesh updates (MU). The army builds on them.
