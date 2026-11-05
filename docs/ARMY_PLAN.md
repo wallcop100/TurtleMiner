@@ -66,6 +66,14 @@ Basic modems reach 64 blocks, so with no ender modem turtles only talk to the ma
 - Commands: JOIN, LEAVE, RELEASE, PAUSE GROUP, RETURN GROUP.
 - Pocket: group summary page + the existing per-turtle pages.
 
+## Multi-level mining (army only, decided 2026-11-05)
+
+- **Levels come from ore-height presets.** The wizard asks which ores to target (diamond, redstone, lapis, gold, iron, copper, coal, emerald, ancient debris). Each ore adds its 1.18 best height as a level, for example diamond -58, redstone -58, lapis 0, gold -16, iron 16, copper 48, coal 96. Duplicates are merged, and levels closer together than 4 blocks are merged into one. The list is shown in the wizard and can be edited later (add or remove a Y) from the army settings.
+- **One shared shaft serves every level.** Each level has its own spine, corridors and branches from the shaft, in the same station frame. Shaft segments are reserved the same way at every depth.
+- **All levels run in parallel.** The coordinator hands out the nearest free branch across all levels, weighted by trip length (deeper levels cost more), so turtles spread over the levels and the near work goes first.
+- **Each level has its own ore focus:** a level made from the diamond preset vein-mines diamond and redstone first, but still takes any ore it passes.
+- Solo turtles stay single-level (`TARGET_Y`).
+
 ## Work packages
 
 Already done elsewhere (not army work any more): bridge/relay (COMMS CM-5), GPS hosting and offer (CLUSTER_GPS CG-3/4), mesh updates (MU). The army builds on them.
@@ -73,7 +81,7 @@ Already done elsewhere (not army work any more): bridge/relay (COMMS CM-5), GPS 
 | WP | What | Files (owner) |
 |----|------|---------------|
 | AR-0 | Protocol + interfaces: `group_join/leave`, `claim_req/grant/done/release`, `seg_req/grant/release`, `slot` (timed shaft window), `station_q`; group record format; turtle-side `group` API | `docs/PROTOCOL.md`, `docs/INTERFACES.md` |
-| AR-1 | Coordinator on the leader: group records, shared grid (reuses mine.lua's layout maths), branch claims, segment locks with direction/convoys, timed up-shaft slots, station queue, replicated through the cluster DB, "never reassign a silent turtle" + RELEASE | new `servers/tm_army.lua`; 1 hook each in `tm_radio.lua` (message branch) and `tm_db.lua` (replicated table) |
+| AR-1 | Coordinator on the leader: group records, shared multi-level grid (levels from ore presets) (reuses mine.lua's layout maths), branch claims, segment locks with direction/convoys, timed up-shaft slots, station queue, replicated through the cluster DB, "never reassign a silent turtle" + RELEASE | new `servers/tm_army.lua`; 1 hook each in `tm_radio.lua` (message branch) and `tm_db.lua` (replicated table) |
 | AR-2 | Turtle group mode: settings `GROUP`, ask for a claim at the station, mine only that branch, ask for segments before shared lanes (shaft/spine/mains), wait/queue, use slots when out of contact, join/leave, overlap check + right of way for solo turtles | new `miner/group.lua`; hooks in `miner/mine.lua` (lane entry points) and `miner/miner.lua` (phases) |
 | AR-3 | Monitor: group page (claims map, lane segments + direction, station queue), JOIN/LEAVE/RELEASE/PAUSE GROUP/RETURN GROUP; fits 26x20, keyboard-first | new `servers/tm_army_ui.lua`; 1 hook in `tm_views.lua` |
 | AR-T | Simulator: many turtles in one world without collisions (a cell holds one turtle; moving into a turtle fails), frozen/unloaded turtle, scenarios below | `test/lib/army.lua`, `test/scenarios/80_*`.. `89_*` |

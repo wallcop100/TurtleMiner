@@ -238,3 +238,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-05 | gps agent | CG-3/3b/4: GPS offer, measure, solve, host, drift, pages; modem measures from the computer block (CC:Tweaked WirelessModemBlockEntity#getPosition). Scenarios 70-76. |
 | 2026-11-05 | coordinator | GPS offer merged to main (PR #4, 64/64). Army plan: work packages updated and split into sub-agent batches (ARMY_PLAN.md). |
 | 2026-11-05 | coordinator | User: no sign of GPS state. Added GPS status to every server footer (GPS n/4pc, GPS layout?, GPS?, GPS F3?, GPS setup, GPS on Nh, GPS never) and a 'why' line on the GPS page. Army plan approved: shared shaft + auto 2nd shaft, monitor wizard with typed station coords, ever-growing grid, map/traffic/stats UI, branch + extra-dig knowledge, avoid solo/no-modem turtles. |
+| 2026-11-05 | coordinator | Army: multi-level mining added to plan (army only, levels from ore-height presets, all levels in parallel, nearest work first). |
