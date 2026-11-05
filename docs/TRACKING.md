@@ -246,3 +246,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-05 | coordinator | Army: multi-level mining added to plan (army only, levels from ore-height presets, all levels in parallel, nearest work first). |
 | 2026-11-01 | MU agent | MU-1..3: mesh updates (tmmesh, tmguard, updater 2.0), rollback with signed bad marks, UPDATES screen + Check now, updater --pull. Old request/response path kept only as a legacy responder for updater 1.x turtles. Scenarios 56-62; 32/54 moved to the new protocol. LOGSTATS |
 | 2026-11-05 | coordinator | Army batch 0 done: contracts (frame, keys, record, messages, group.lua API, presets) in ARMY_PLAN.md; approved decisions replace the old 'How it works'. Mesh updates merged locally, suite running. |
+| 2026-11-05 | coordinator | GPS turtles underground: not added (user: only if they can live-report; with basic modems at depth they can't reach the server). |
