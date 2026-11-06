@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- Scenario 71 (CG-3): 4 well placed wireless PCs. The offer shows on the monitor and on every
 -- PC's terminal; ONE confirm on a replica's keyboard sets up all (the banner clears everywhere,
 -- the coordinate prompts go to the PCs that are needed). "Never" is remembered cluster-wide
@@ -42,6 +42,16 @@ return {
         H.uiPress(C, "ENABLE")
         sim.run({ maxTime = 40 })
         for _, S in ipairs(all) do H.check(st(S) == "offer" and not S.T.gps.view.never, "#%d st %s after ENABLE", S.c.id, st(S)) end
+
+        -- Later hides the offer; the GPS page's OFFER NOW brings it back at once
+        H.uiPress(B, "Later")
+        sim.run({ maxTime = 8 })
+        for _, S in ipairs(all) do H.check(st(S) == "idle" and S.T.gps.view.later, "#%d st %s after Later", S.c.id, st(S)) end
+        ui.view = "gps"; C.T.markDirty(); sim.run({ maxTime = 1 })
+        H.check(C.c.term._text():find("OFFER NOW", 1, true), "no OFFER NOW after Later:\n%s", C.c.term._text())
+        H.uiPress(C, "OFFER NOW")
+        sim.run({ maxTime = 40 })
+        for _, S in ipairs(all) do H.check(st(S) == "offer", "#%d st %s after OFFER NOW", S.c.id, st(S)) end
 
         -- one confirm (on the replica D's terminal) sets up all
         ui.view = "list"
