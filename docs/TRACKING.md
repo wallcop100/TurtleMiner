@@ -251,3 +251,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 | 2026-11-05 | coordinator | Replaced 'parked GPS turtles' with mobile GPS: army turtles answer GPS pings with their current certain world position between moves; fixes cross-checked against the journal. |
 | 2026-11-05 | coordinator | Mobile GPS widened: every turtle (solo or army) whose world position is known hosts GPS automatically, no user interaction; own work package AR-G, can ship before the army. |
 - 2026-11-06: army merged to main with known issue: big armies jam (scenario 85 fails); see ARMY_PLAN.md Known issue.
+- 2026-11-06: GPS 'Later' had no way back for 6 h: GPS page now has OFFER NOW, footer shows 'GPS later' (scenario 71).

@@ -1,4 +1,4 @@
--- Version: 1.0.2
+-- Version: 1.0.3
 -- TurtleMiner GPS constellation from the server PCs (docs/CLUSTER_GPS_PLAN.md section 3).
 -- Offered, never required. The cluster leader counts the PCs with a wireless or ender modem;
 -- with >= 4 and a good layout (measured, not coplanar, >= 6 blocks apart) it offers
@@ -651,6 +651,7 @@ function G.status()
     if V.st == "asking" then return "GPS F3?", true end
     if V.st == "setup" then return "GPS setup", true end
     if V.never then return "GPS never", false end
+    if V.later and t < V.later then return "GPS later", false end
     if n < 4 then return "GPS " .. n .. "/4+pc", false end
     return "GPS layout?", false   -- enough PCs, but too flat/close (see V.note)
 end
@@ -778,7 +779,7 @@ local function renderGps(ui)
     elseif st == "offer" then add("Possible with " .. tostring(V.n) .. " PCs", colors.yellow)
     elseif st == "asking" or st == "setup" then add("Setting up...", colors.yellow)
     else
-        add("Not running" .. (V.later and " (later)" or ""), colors.lightGray)
+        add("Not running" .. ((V.later and now() < V.later) and " (you chose Later; OFFER NOW to ask again)" or ""), colors.lightGray)
         local n = #eligible(now())
         add(n .. " PC(s) with a wireless/ender modem here; needs 4 or more,", n >= 4 and colors.white or colors.orange)
         add("spread out, not all at one height.", colors.lightGray)
@@ -805,6 +806,10 @@ local function renderGps(ui)
     if st == "setup" or st == "asking" then defs[#defs + 1] = { "CANCEL", colors.red, function() G.cmd("cancel") end } end
     if st == "on" then defs[#defs + 1] = { "STOP", colors.red, function() G.cmd("stop") end } end
     if V.never then defs[#defs + 1] = { "ENABLE", colors.green, function() G.cmd("enable") end }
+    elseif st == "idle" then
+        -- after Later (or STOP / CANCEL) the offer is held back for a while: check again now
+        defs[#defs + 1] = { "OFFER NOW", colors.green, function() G.cmd("enable") end }
+        defs[#defs + 1] = { "NEVER", colors.gray, function() G.cmd("never") end }
     else defs[#defs + 1] = { "NEVER", colors.gray, function() G.cmd("never") end } end
     defs[#defs + 1] = { "BACK", colors.gray, function() ui.view = "net" end }
     local top = UI.buttonGrid(ui, defs, 3, #L2)
