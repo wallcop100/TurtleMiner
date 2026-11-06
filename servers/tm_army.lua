@@ -154,7 +154,11 @@ function A.segGrant(army, tid, keys, dir, now)
         if key:match("^s1:") and dir == "up" and army.shafts[2] and army.shafts[2].done then return false, "use_shaft2" end
         if key:match("^s2:") and dir == "down" then return false, "shaft2_up_only" end
         local k = dir == "down" and key:match("^s(%d):")
-        if k then   -- a turtle out of contact comes up on its booked window without a lock: keep the shaft free
+        if k then
+            -- a climber waits below the top cell for the station: the shaft must stay free for it
+            for id, t in pairs(army.climbing or {}) do
+                if id ~= tid and now - t < 20000 then return false, "climber_waiting" end
+            end   -- a turtle out of contact comes up on its booked window without a lock: keep the shaft free
             for _, sl in ipairs(army.slots) do
                 if sl.tid ~= tid and tostring(sl.shaft) == k and now > sl.at - sl.len and now < sl.at + sl.len then
                     return false, "slot_window"
@@ -220,10 +224,13 @@ function A.bookSlot(army, tid, shaft, dir, eta, now)
     for _, sl in ipairs(army.slots) do
         if sl.tid ~= tid and sl.at + sl.len > now - 60000 then keep[#keep + 1] = sl end
     end
+    -- Windows are spaced with a gap (a down trip takes ~len): turtles waiting to leave get a free window in
+    -- between instead of waiting for the last climber of a queue (slot_window refusals).
     local len, at = A.slotLen(army), now + math.max(0, eta or 0)
+    local pad = len * 3
     table.sort(keep, function(a, b) return a.at < b.at end)
     for _, sl in ipairs(keep) do
-        if sl.shaft == shaft and at < sl.at + sl.len and sl.at < at + len then at = sl.at + sl.len end
+        if sl.shaft == shaft and at < sl.at + sl.len + pad and sl.at < at + len + pad then at = sl.at + sl.len + pad end
     end
     local slot = { tid = tid, shaft = shaft, dir = dir, at = at, len = len }
     keep[#keep + 1] = slot
@@ -272,6 +279,7 @@ function A.releaseTurtle(army, tid)
     A.queueRemove(army, tid)
     if army.shafts[2] and army.shafts[2].digger == tid then army.shafts[2].digger = nil end
     army.waiting[tid] = nil
+    if army.climbing then army.climbing[tid] = nil end
     return n
 end
 
@@ -323,7 +331,7 @@ end
 function A.cfgOf(army)
     local c = {}
     for k, v in pairs(army) do
-        if k ~= "branches" and k ~= "extra" and k ~= "segs" and k ~= "slots" and k ~= "waiting" then c[k] = v end
+        if k ~= "branches" and k ~= "extra" and k ~= "segs" and k ~= "slots" and k ~= "waiting" and k ~= "climbing" then c[k] = v end
     end
     return c
 end
@@ -450,6 +458,7 @@ function H.claim_req(msg, now)
     if army.paused or m.state == "leaving" then return reply({ wait = 30 }) end
     if A.wantSecondShaft(army) then
         army.shafts[2].digger = tid
+        print("TRC DIGSHAFT", tid, now)
         touch(army)
         return reply({ dig_shaft = 2 })
     end
@@ -496,6 +505,8 @@ function H.seg_req(msg, now)
     local keys = type(msg.segs) == "table" and msg.segs or {}
     if keys[1] == "station" then
         local pos = A.queueAdd(army, tid)
+        army.climbing = army.climbing or {}
+        army.climbing[tid] = msg.climb and now or nil
         touch(army)
         sendTo("station_q", tid, { pos = pos, go = pos == 1 })
         return army, pos
@@ -524,6 +535,7 @@ function H.seg_release(msg, now)
     if not army then return nil, "not a member" end
     local keys = type(msg.segs) == "table" and msg.segs or {}
     if keys[1] == "station" then
+        if army.climbing then army.climbing[tid] = nil end
         A.queueRemove(army, tid)
         if army.queue[1] then sendTo("station_q", army.queue[1], { pos = 1, go = true }) end
     else

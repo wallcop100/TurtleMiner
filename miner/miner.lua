@@ -786,6 +786,11 @@ local function armyRun()
         return "wait", wait or 5
     end
     if job.dig_shaft then
+        if st.pos.y < st.home.y then   -- claimed at depth: the second shaft starts at the station spot
+            local ok, why, detail = mine.retreat()
+            if not ok then return "stuck", tostring(detail or why) end
+            group.stationRelease()
+        end
         local res, why = mine.digShaft(group.deepest())
         if res == "done" then group.shaftDone(); return "next" end
         return res, why

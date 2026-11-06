@@ -72,7 +72,7 @@ function group.init(st_, cfg_, nav_, inv_, mine_, net_, ctl_)
     extra, extraN, doneTries = {}, 0, 0
     if net.onKind then net.onKind("army_cfg", applyCfg) end
     ctl.lane, ctl.unlane = group.enterLane, group.leaveLane
-    ctl.station, ctl.unstation, ctl.stationAside = group.stationWait, group.stationRelease, group.stationAside
+    ctl.station, ctl.unstation = group.stationWait, group.stationRelease
     ctl.dig = group.reportDig
     local a = A()
     mine.armyMode(a ~= nil)
@@ -156,6 +156,8 @@ end
 
 local function bookSlot(a, job)
     if net.modemKind and net.modemKind() == "ender" then return end
+    -- claimed at depth and still in contact there (a relay reaches the level): live lanes suffice, no slot
+    if st.pos.y <= st.home.y - 20 and net.inContact() then return end
     local y, c, b = parseKey(job.key)
     if not y then return end
     local g = job.geom
@@ -265,7 +267,7 @@ end
 
 -- Blocks until every segment is granted (all or nothing), or an out-of-contact up trip reaches its
 -- slot time. Returns true | false, reason ("stop" | "use_shaft2" | "denied").
-function group.enterLane(segs, dir)
+function group.enterLane(segs, dir, yield)
     local a = A()
     if not a or #segs == 0 then return true end
     local started = nowMs()
@@ -275,9 +277,14 @@ function group.enterLane(segs, dir)
         if a.left then return true end   -- removed from the army: nobody answers, nobody expects us
         local r
         if net.inContact() then r = net.request("seg_req", { name = a.name, segs = segs, dir = dir }, "seg_grant", 4) end
-        if r and r.segs then return true end
+        if r and r.segs then
+            return true
+        end
         if r and r.why == "use_shaft2" then return false, "use_shaft2" end
         if r and r.wait then
+            -- refused because an out-of-contact climber may be in the shaft: give the station spot back
+            -- (the hook steps aside and leaves the queue) so the climber is not blocked behind us
+            if yield and (r.why == "slot_window" or r.why == "climber_waiting") then local y = yield; yield = nil; pcall(y) end
             if sleepCheck(math.min(tonumber(r.wait) or 5, 5)) == "stop" then return false, "stop" end
         elseif dir == "up" then
             -- nobody answered (out of contact): the booked slot window, else keep trying a while and go anyway
@@ -301,31 +308,19 @@ function group.leaveLane(segs)
 end
 
 -- Station queue: one turtle at the station spot at a time. A single try: true = go (or nobody answers).
-local function stationTry(a)
+local function stationTry(a, climb)
     if a.left or not net.inContact() then return true end
-    local r = net.request("seg_req", { name = a.name, segs = { "station" }, dir = "up" }, "station_q", 4)
+    local r = net.request("seg_req", { name = a.name, segs = { "station" }, dir = "up", climb = climb and true or nil }, "station_q", 4)
     if not r then return true end
     return r.go and true or false
 end
 
--- At depth (before the up lane): wait for our turn.
-function group.stationWait()
+-- Wait for our turn: at depth (before the up lane) and just below the top cell (climb = true: a climber is due).
+function group.stationWait(climb)
     local a = A()
     if not a then return end
     local t0 = nowMs()
-    while nowMs() - t0 < 600000 and not stationTry(a) do
-        if sleepCheck(3) == "stop" then return end
-    end
-end
-
--- At the top of the shaft: wait for our turn standing aside (`aside()` moves out of the shaft column), so the
--- turtle at the spot can still leave down the shaft.
-function group.stationAside(aside)
-    local a = A()
-    if not a then return end
-    local t0, moved = nowMs(), false
-    while nowMs() - t0 < 600000 and not stationTry(a) do
-        if not moved then moved = true; pcall(aside) end
+    while nowMs() - t0 < 600000 and not stationTry(a, climb) do
         if sleepCheck(3) == "stop" then return end
     end
 end

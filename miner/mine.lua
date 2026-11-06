@@ -743,10 +743,10 @@ end
 
 local held = {}   -- segment keys currently granted to us
 
-local function lane(segs, dir)
+local function lane(segs, dir, yield)
     if #segs == 0 then return true end
     if not (ctl and ctl.lane) then return true end
-    local ok, why = ctl.lane(segs, dir)
+    local ok, why = ctl.lane(segs, dir, yield)
     if ok then for _, k in ipairs(segs) do held[k] = true end end
     return ok, why
 end
@@ -871,8 +871,53 @@ local function aOut()
     if st.pos.y == T and f == fb and (r - rc) * sign >= 0 and math.abs(r - rc) <= aj.bl then return nil end
     if st.pos.y > T then
         local shaft, spine, main = shaftSegs(1, T), spineSegs(T, 0, rc), mainSegs(T, aj.c, fb)
-        local ok, why = lane(cat(shaft, spine, main), "down")
-        if not ok then return laneSig(why) end
+        local allSegs = cat(shaft, spine, main)
+        local ok, why
+        for _ = 1, 30 do
+            local yield
+            local yielded = false
+            if f == 0 and r == 0 and st.pos.y == st.home.y then
+                -- On the station spot with the lane refused (a climber is due or waiting): do not sit on the
+                -- spot and the station queue. Wait in (0,1), above the spot or in (1,1) if one is free; if none
+                -- is, keep spot and queue (the others leave first).
+                yield = function()
+                    local H0 = st.home.y
+                    local function free(d)
+                        local present, data = look(d)
+                        return not present
+                    end
+                    local moved = false
+                    if free((FD() + 1) % 4) then moved = rawLine("r", 1)
+                    elseif free(UP) then moved = rawLine("y", H0 + 1)
+                    elseif free(FD()) then
+                        moved = rawLine("f", 1) and rawLine("r", 1)
+                        if not moved then rawLine("r", 0); rawLine("f", 0) end
+                    end
+                    if moved then
+                        yielded = true
+                        if ctl and ctl.unstation then pcall(ctl.unstation) end
+                    end
+                end
+            end
+            ok, why = lane(allSegs, "down", yield)
+            if not ok then return laneSig(why) end
+            f, r = frame(st.pos)
+            if not yielded then break end
+            -- we stood aside: drop the lane, take the station and the spot again, then ask once more
+            unlane(allSegs)
+            if ctl and ctl.station then ctl.station() end
+            for _ = 1, 20 do   -- the cells around the spot are busy: keep trying (never go idle off the spot)
+                local back = true
+                if st.pos.y > st.home.y then back = rawLine("y", st.home.y)
+                elseif f == 1 then back = rawLine("r", 0) and rawLine("f", 0)
+                elseif r ~= 0 then back = rawLine("r", 0) end
+                f, r = frame(st.pos)
+                if back and f == 0 and r == 0 and st.pos.y == st.home.y then break end
+                if ctlCheck() == "stop" then return "stop", "command" end
+                sleep(3)
+            end
+            if not (f == 0 and r == 0 and st.pos.y == st.home.y) then return "return", "command" end
+        end
         aj.mainSegs = main
         local legs = {}
         if f == 0 then
@@ -995,7 +1040,7 @@ armyRetreat = function()
         if not got then return laneFail("denied") end
         local r0 = (k == 2) and 1 or 0
         legs = { { "r", f > 2 and m or r }, { "f", 2 }, { "r", r0, rel = main }, { "f", 1, rel = spine },
-            { "y", H0 }, { "aside" }, { "r", 0 }, { "f", 0, rel = shaftSeg } }
+            { "y", H0 - 1 }, { "wait" }, { "y", H0 }, { "r", 0 }, { "f", 0, rel = shaftSeg } }
     else
         -- inside a shaft column
         local kk = (r == 1) and 2 or 1
@@ -1003,27 +1048,12 @@ armyRetreat = function()
         station()
         local ok, why = lane(shaftSeg, "up")
         if not ok then return laneFail(why) end
-        legs = { { "y", H0 }, { "aside" }, { "r", 0 }, { "f", 0, rel = shaftSeg } }
+        legs = { { "y", H0 - 1 }, { "wait" }, { "y", H0 }, { "r", 0 }, { "f", 0, rel = shaftSeg } }
     end
     for _, leg in ipairs(legs) do
-        if leg[1] == "aside" then
-            -- top of the shaft: wait for the station spot standing in (1,1), not in the way of whoever leaves
-            local waited = 0
-            while true do
-                if ctl and ctl.stationAside then ctl.stationAside(function() rawLine("r", 1) end) end
-                local _, rr = frame(st.pos)
-                if rr ~= 0 then
-                    local ok = rawLine("r", 0)
-                    if not ok then break end
-                end
-                -- is a turtle standing on the station spot (not in the queue, e.g. it came up on its slot)?
-                local present, data = look((FD() + 2) % 4)
-                if not (present and isTurtleBlock(data)) then break end
-                rawLine("r", 1)
-                waited = waited + 3
-                sleep(3)
-                if ctlCheck() == "stop" or waited > 600 then break end
-            end
+        if leg[1] == "wait" then
+            -- just below the top cell: wait for the station queue here, so the top cell and the spot stay free
+            if ctl and ctl.station then ctl.station(true) end
         else
             local ok, a, b = raw(leg[1], leg[2])
             if not ok then unlaneAll(); return false, a, b end
