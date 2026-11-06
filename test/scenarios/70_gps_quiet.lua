@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- Scenario 70 (CG-3, docs/CLUSTER_GPS_PLAN.md section 3): GPS is offered only when it can work.
 --   3 wireless PCs: nothing (no measuring, no hint on terminal or monitor).
 --   a 4th PC in the same plane as the others: measured, judged flat, still silent.
@@ -32,6 +32,12 @@ return {
         H.check(H.sentBy(1, 100, 230, "gps_measure") >= 1, "no measurement with 4 PCs")
         H.check(not offered(A), "offered a flat layout")
         H.check(A.T.gps.view.note and A.T.gps.view.note:find("plane", 1, true), "reason: %s", tostring(A.T.gps.view.note))
+        -- the reason reaches the replicas too, and the GPS page shows it (user report 2026-11-06)
+        H.check(B.T.gps.view.note and B.T.gps.view.note:find("one height", 1, true), "replica reason: %s", tostring(B.T.gps.view.note))
+        local bui = H.uiTerminal(B)
+        bui.view = "gps"; B.T.markDirty(); sim.run({ maxTime = 1 })
+        H.check(B.c.term._text():find("one height", 1, true), "GPS page on #2 shows no reason:\n%s", B.c.term._text())
+        bui.view = "list"; B.T.markDirty()
         H.check(not mon._text():find("GPS possible", 1, true) and not D.c.term._text():find("GPS possible", 1, true),
             "banner shown for a flat layout")
 
