@@ -1,4 +1,4 @@
--- Version: 1.0.3
+-- Version: 1.0.4
 -- TurtleMiner GPS constellation from the server PCs (docs/CLUSTER_GPS_PLAN.md section 3).
 -- Offered, never required. The cluster leader counts the PCs with a wireless or ender modem;
 -- with >= 4 and a good layout (measured, not coplanar, >= 6 blocks apart) it offers
@@ -273,8 +273,9 @@ local function setOffer(ids, why)
         V.offer = nil
         if V.st == "offer" then V.st = "idle" end
     end
+    local noteChanged = V.note ~= why
     V.note = why
-    if (ids ~= nil) ~= was then
+    if (ids ~= nil) ~= was or noteChanged then
         if ids then T.logLine("GPS: possible with " .. #ids .. " PCs") end
         publish()
     end
@@ -348,6 +349,20 @@ local function beginSetup(t)
 end
 
 -- Distances measured: act on the purpose.
+-- Why no offer, in words a player can act on.
+function G.explain(why, heard, total)
+    why = tostring(why or "unknown")
+    if why == "need 4 PCs" or why:find("^missing distance") then
+        return ("only %d of %d PCs heard each other by radio; GPS needs 4. Move them closer "
+            .. "(basic modems reach 64 blocks below Y 96) or use ender modems"):format(heard, total)
+    elseif why == "all in one plane" then
+        return "PCs are all at one height (or in one flat plane): raise or lower one by 2+ blocks"
+    elseif why == "all in one line" then
+        return "PCs are in a straight line: move one sideways"
+    end
+    return "layout not usable: " .. why
+end
+
 local function measured(t)
     local rnd = L.rnd
     L.rnd = nil
@@ -355,7 +370,7 @@ local function measured(t)
     if rnd.purpose == "offer" then
         if V.st ~= "idle" and V.st ~= "offer" then return end
         local P, why = M.layout(ids, D)
-        if P then setOffer(ids) else setOffer(nil, why) end
+        if P then setOffer(ids) else setOffer(nil, G.explain(why, #ids, #rnd.expect)) end
         L.lastEval = t
     elseif rnd.purpose == "setup" then
         if not L.setup or V.st ~= "setup" then return end
@@ -579,6 +594,7 @@ function handle(m)
             publish(t)
         elseif op == "enable" then
             V.never, V.later = false, nil
+            V.note = "checking the PCs' layout..."
             L.dirty, L.nextEval = true, 0
             publish(t)
         elseif op == "cancel" and inSetup() then
@@ -784,7 +800,15 @@ local function renderGps(ui)
         add(n .. " PC(s) with a wireless/ender modem here; needs 4 or more,", n >= 4 and colors.white or colors.orange)
         add("spread out, not all at one height.", colors.lightGray)
     end
-    if V.note then add(V.note, colors.orange) end
+    if V.note then
+        -- wrap: the reason is the one thing the player needs to read in full
+        local line = ""
+        for word in tostring(V.note):gmatch("%S+") do
+            if #line > 0 and #line + 1 + #word > ui.w then add(line, colors.orange); line = word
+            else line = (#line > 0 and (line .. " ") or "") .. word end
+        end
+        if #line > 0 then add(line, colors.orange) end
+    end
     local cov, ys = G.coverage()
     if cov then add("Reach: " .. cov); add("Host heights: Y " .. ys) end
     local mob, ys2 = 0, {}
