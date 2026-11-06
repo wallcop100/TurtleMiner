@@ -1,4 +1,4 @@
--- Version: 1.3.0
+-- Version: 1.4.0
 -- TurtleMiner network layer (TMINER protocol v1, see docs/PROTOCOL.md and docs/COMMS.md).
 -- One rednet wrapper for the whole turtle. Never moves the turtle.
 -- Works offline: with no modem every send is a silent no-op.
@@ -35,7 +35,7 @@ local SERVER_KINDS = { fleet = true, cmd = true, home = true, update_manifest = 
 local KNOWN_CMDS = {
     RETURN_HOME = true, PAUSE = true, RESUME = true, SET = true,
     REQUEST_STATUS = true, RESET_JOB = true, RESET_HOME = true,
-    UPDATE = true, REBOOT = true,
+    UPDATE = true, REBOOT = true, ARMY_JOIN = true, ARMY_LEAVE = true,
 }
 
 local cfg         = { STATUS_INTERVAL = 10 }
@@ -48,6 +48,7 @@ local waiting     = {}     -- replyKind -> number of pending requests
 local replies     = {}     -- replyKind -> msg
 local statusWanted = false
 local statusDeferred = false   -- a status was skipped out of contact: send the newest on contact
+local kindHooks   = {}     -- kind -> fn(msg): unsolicited replies (army_cfg)
 local validator   = nil    -- optional fn(cmd, params) -> ok, err (used for the ack)
 
 local function now() return os.epoch("utc") end
@@ -69,6 +70,7 @@ local function loadMod(name)
 end
 local crypto = loadMod("tmcrypto")
 local Mesh = loadMod("tmmesh")
+local GpsMobile = loadMod("gpsmobile")
 local signer = nil        -- nil: no network (send nothing, accept nothing)
 local netName = nil
 local mesh = nil          -- tmmesh engine (needs the network)
@@ -507,6 +509,8 @@ local function handle(msg, sender)
         if not okM then net.stats.meshErr = tostring(err) end
         return
     end
+    local hk = kindHooks[msg.kind]
+    if hk then pcall(hk, msg) end
     if msg.kind == "cmd" then
         handleCmd(msg)
     elseif waiting[msg.kind] and waiting[msg.kind] > 0 then
@@ -521,6 +525,7 @@ end
 -- records the raw-modem distance to each server PC it hears directly and sends them, so the
 -- server PCs can anchor a GPS constellation without asking anyone.
 local posFn, gsamp, gsLast, gsSent = nil, {}, {}, 0
+function net.gpsHost() return GpsMobile ~= nil and GpsMobile.active() end
 function net.setGpsPos(fn) posFn = fn end
 local function gpsSample(ev)
     local p, d = ev[5], ev[6]
@@ -544,6 +549,7 @@ local function onEvent(ev)
     elseif e == "timer" then
         fireRelay(ev[2])
     elseif e == "modem_message" then
+        if GpsMobile and ev[3] == 65534 then pcall(GpsMobile.onMessage, ev) end
         gpsSample(ev)
         -- A basic-modem sender heard from beyond any basic range: our modem is an ender modem.
         local p, d = ev[5], ev[6]
@@ -587,6 +593,7 @@ function net.init(c)
     loadNetwork()
     readOverrides()
     openModems()
+    if GpsMobile then pcall(GpsMobile.open) end
     mesh = nil
     if Mesh and signer and netKey then
         local okM, e = pcall(function()
@@ -603,6 +610,7 @@ function net.init(c)
 end
 
 function net.setValidator(fn) validator = fn end
+function net.onKind(kind, fn) kindHooks[kind] = fn end
 
 -- Safe from the worker coroutine while net.run runs in parallel: parallel
 -- hands every event to both coroutines, and handle() is deduped.

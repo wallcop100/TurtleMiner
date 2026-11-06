@@ -1,4 +1,4 @@
--- Version: 1.5.0
+-- Version: 1.6.2
 -- One-shot downloader. Usage (in CC, needs the HTTP API enabled):
 --   wget run <BASE>/setup.lua server    -- any server PC: tminer_server + update files (/files/)
 --   wget run <BASE>/setup.lua monitor   -- server PC without update files (same program)
@@ -20,14 +20,14 @@
 local BRANCH = "main"
 local BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/" .. BRANCH .. "/"
 
-local MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "net.lua",
+local MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "group.lua", "net.lua",
                 "miner.lua", "updater.lua", "install.lua", "startup.lua",
-                "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua" }
+                "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua", "gpsmobile.lua" }
 -- Mining network + mesh update modules: every device gets them (from miner/).
 local NETMODS = { "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "tmmesh.lua", "tmguard.lua", "updater.lua" }
 -- tminer_server and its modules (central_monitor = compatibility launcher for old startups)
 local SERVER = { "tminer_server.lua", "tm_db.lua", "tm_radio.lua", "tm_cluster.lua", "tm_ui.lua",
-                 "tm_views.lua", "tm_update.lua", "tm_gps.lua", "tm_gpssolve.lua", "tm_army.lua", "central_monitor.lua" }
+                 "tm_views.lua", "tm_update.lua", "tm_gps.lua", "tm_gpssolve.lua", "tm_army.lua", "tm_army_ui.lua", "central_monitor.lua" }
 -- Relay programs (also kept in /files/ on an update server, so relays get updates)
 local RELAY = { "relay.lua", "relay_startup.lua" }
 

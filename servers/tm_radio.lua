@@ -1,4 +1,4 @@
--- Version: 1.2.0
+-- Version: 1.3.0
 -- TurtleMiner server, radio part: TMINER envelope, dedupe, modems, relaying (mesh across
 -- wired / wireless / ender, docs/COMMS.md), the turtle protocol (docs/PROTOCOL.md) and the
 -- `fleet` heartbeat. Loaded into the shared table T after tm_db.lua.
@@ -197,8 +197,16 @@ local function stripEnvelope(msg)
     return t
 end
 
+-- Extra digs (vein / detour cells) a turtle reports go to its army (leader only).
+local function armyExtras(msg)
+    if T.army and T.army.onExtras and type(msg.extra) == "table" and T.isLeader and T.isLeader() then
+        T.army.onExtras(msg.from, msg.extra)
+    end
+end
+
 local function onStatus(msg)
     local r = T.getRec(msg.from, true)
+    armyExtras(msg)
     local old = r.st.phase
     r.st = stripEnvelope(msg)
     r.st.hop, r.st.ohop, r.st.via, r.st.mk = nil, nil, nil, nil
@@ -252,6 +260,7 @@ end
 local function onCatchup(msg)
     local r = T.getRec(msg.from, true)
     r.lastSeen = now()
+    armyExtras(msg)
     if type(msg.events) ~= "table" then return end
     local lines = {}
     for _, e in ipairs(msg.events) do

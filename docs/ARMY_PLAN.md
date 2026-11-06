@@ -38,6 +38,7 @@ Basic modems reach 64 blocks, so with no ender modem turtles only talk to the ma
 - Station = typed origin `(x,y,z,facing)`. The shaft column is one block **in front** of the station spot (keeps the chest-behind/beside rule; the station spot stays free for unloading).
 - Shaft split into 16-block **segments**; a segment holds a direction (down/up) and any number of turtles going that way (convoy); flips only when empty.
 - Out of contact (basic modems): the **up** trip uses a **timed slot** booked before leaving; with a relay at the shaft bottom or any ender modem, live reservations instead.
+- Station-spot hand-off (basic modems): slot windows are spaced with a gap of 3 window lengths so a leaver finds a free window; a climber waits in the shaft just below the top cell (`seg_req` station with `climb=true`, answered by `station_q`), never in the top cell. While a climber waits or a slot window is open the coordinator refuses down lanes (`climber_waiting` / `slot_window`); the refused leaver on the spot steps to (0,1), above the spot or (1,1) (if free), leaves the station queue, and re-queues for the spot once its lane is granted. A turtle claimed for the second shaft first returns to the station.
 - Second shaft: coordinator measures average wait; above a threshold (default 60 s) it assigns the next free turtle a "dig up-shaft" job next to the first; once done, shaft 1 = down, shaft 2 = up, no direction flips.
 - Station queue: one turtle at the station spot at a time (unload, refuel), others wait in the up-shaft below; full chest = one army alert, all wait.
 
@@ -189,3 +190,6 @@ Batch 1 and 2 each run two agents side by side; nothing in a batch edits the sam
 2. **Server location:** usually near the mine, but must work at a distant base too. The "never reassign a silent turtle's claims or segments" rule covers both.
 3. **GPS nodes:** hardware is ready. `gpsnode` still gets written for health reporting and easy setup, and can adopt an existing `gps host` computer (reads its startup coordinates).
 4. **Joining without GPS:** carrying it to the station is fine.
+
+## Known issue (2026-11-06)
+Large armies (about 6+ turtles) can jam: turtles meeting head-on in the 1-wide spine/corridors have no right-of-way rule yet, and with live contact turtles can pile up at the top shaft column. Scenario 85 (10 turtles, second shaft) fails for this reason. Small armies (scenarios 84, 86-89, 96) pass.

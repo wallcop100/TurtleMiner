@@ -1,4 +1,4 @@
--- Version: 1.1.0
+-- Version: 1.2.0
 -- TurtleMiner server cluster (docs/CLUSTER_GPS_PLAN.md section 2, docs/PROTOCOL.md "Cluster").
 -- Every server PC runs this. Over any modem mix (the radio part relays across wired,
 -- wireless and ender modems) the PCs find each other with `cluster_hello`, pick ONE leader
@@ -214,6 +214,13 @@ local function onForward(msg)
         else
             T.issueCmd(target, msg.cmd, type(msg.params) == "table" and msg.params or {}, msg.origin, id)
         end
+    elseif msg.op == "army" then
+        local b = msg.body
+        if type(b) == "table" and T.army and T.army.KINDS and T.army.KINDS[b.kind] then
+            b.from = msg.from
+            T.army.handle(b)
+            T.markDirty()
+        end
     elseif msg.op == "merge" then
         local n = 0
         for id, p in pairs(type(msg.pending) == "table" and msg.pending or {}) do
@@ -289,6 +296,14 @@ function T.forwardCmd(target, cmd, params, origin, id)
     sendOutbox(t, false)
     T.markDirty()
     return id
+end
+
+-- Replica: forward an army action (army_new / army_set / army_release ...) to the leader.
+-- Returns true when sent; the result comes back through the replicated S.armies.
+function T.forwardArmy(body)
+    if C.role ~= "replica" or not C.leader then return nil, "no leader yet" end
+    send("cluster_fwd", C.leader, { op = "army", body = body })
+    return true
 end
 
 -- After replicated data arrived: drop forwarded commands the leader has, keep the rest shown.

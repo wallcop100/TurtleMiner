@@ -1,4 +1,4 @@
--- Version: 1.4.0
+-- Version: 1.5.2
 -- Pulls newer TurtleMiner files from GitHub into the update server's folder
 -- (and the server's own programs). Used by update_server at boot and every
 -- tminer.pull_minutes (default 60, 0 = boot only).
@@ -18,9 +18,9 @@ local M = {}
 
 M.DEFAULT_BASE = "https://raw.githubusercontent.com/wallcop100/TurtleMiner/main/"
 
-M.MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "net.lua",
+M.MINER = { "config.lua", "state.lua", "nav.lua", "inv.lua", "mine.lua", "group.lua", "net.lua",
             "miner.lua", "updater.lua", "install.lua", "startup.lua",
-            "tmcrypto.lua", "tmwords.lua", "tmjoin.lua" }
+            "tmcrypto.lua", "tmwords.lua", "tmjoin.lua", "gpsmobile.lua" }
 
 -- Server programs: repo path -> local path. Only replaced if already present (so a
 -- monitor-less update server doesn't suddenly get a monitor). The third field lists files
@@ -40,6 +40,7 @@ M.SERVER = {
     { "servers/tm_gps.lua", "tm_gps.lua", NEEDS_SERVER },
     { "servers/tm_gpssolve.lua", "tm_gpssolve.lua", NEEDS_SERVER },
     { "servers/tm_army.lua", "tm_army.lua", NEEDS_SERVER },
+    { "servers/tm_army_ui.lua", "tm_army_ui.lua", NEEDS_SERVER },
     { "servers/tminer_server.lua", "tminer_server.lua", NEEDS_SERVER },
     { "servers/central_monitor.lua", "central_monitor.lua" },
     { "servers/update_server/update_server.lua", "update_server.lua" },

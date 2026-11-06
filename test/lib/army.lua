@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- Army scenario helpers (docs/ARMY_PLAN.md, "Contracts (batch 0)"). Sim only.
 --   local A = require("army")(sim, H)
 --   A.need()                      skip the scenario unless servers/tm_army.lua and miner/group.lua exist
@@ -72,6 +72,7 @@ return function(sim, H)
         local f = io.open(REPO .. "/servers/tm_army.lua", "rb")
         if f then srv.c.fs:write("tm_army.lua", f:read("a")); f:close() end
         srv.boot()
+        sim.run({ maxTime = 30 })   -- cluster election: only the leader takes army messages
         st.leader = srv
         return srv
     end
@@ -249,7 +250,9 @@ return function(sim, H)
             local rec = st.army and A.record(st, st.army)
             local pos = {}
             for _, t in ipairs(st.turtles) do
-                pos[#pos + 1] = string.format("%d@%d,%d,%d%s", t.id, t.pos.x, t.pos.y, t.pos.z, t.computer.alive and "" or "!")
+                local r = st.leader and st.leader.rec and st.leader.rec(t.id)
+                local ph = r and r.st and (tostring(r.st.phase) .. ":" .. tostring(r.st.reason or r.st.why or "")) or "?"
+                pos[#pos + 1] = string.format("%d@%d,%d,%d%s[%s]", t.id, t.pos.x, t.pos.y, t.pos.z, t.computer.alive and "" or "!", ph)
             end
             H.fail("%s: %s (%s); done %s; %s", what or "condition not reached", r.status, r.why or "",
                 rec and A.done(rec) or "?", table.concat(pos, " "))

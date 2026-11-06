@@ -1,4 +1,4 @@
--- Version: 1.2.1
+-- Version: 1.3.0
 -- TurtleMiner server UI, part 1: drawing helpers, the turtle list and the turtle card, the
 -- render dispatch, keyboard / mouse / touch input and the UI loop. Any number of displays
 -- (monitors + the PC's own terminal, or a pocket). Keyboard first (docs/COMMS.md): arrow keys
@@ -361,7 +361,7 @@ T.ui = {
 T.VIEWS = T.VIEWS or {}
 
 -- Navigation state a monitor without touch copies from the terminal (keyboard) UI.
-local NAV = { "view", "sel", "page", "setKey", "input", "msg", "text", "confirmCmd" }
+local NAV = { "view", "sel", "page", "setKey", "input", "msg", "text", "confirmCmd", "army", "wz" }
 
 function T.render(ui)
     local w, h = ui.dev.getSize()
@@ -401,6 +401,12 @@ end
 -- One step back (Backspace): the card from its sub-screens, the list from the card / log.
 function T.back(ui)
     if ui.view == "list" then return false end
+    local bk = T.BACK and T.BACK[ui.view]
+    if bk then
+        if type(bk) == "function" then bk(ui) else ui.view = bk end
+        ui.msg = nil
+        return true
+    end
     if ui.view == "gps" or ui.view == "cluster" then ui.view = "net"
     elseif ui.view == "detail" or ui.view == "log" or ui.view == "net" or ui.view == "updates" then ui.view = "list"
     elseif ui.view == "netconfirm" or ui.view == "netcode" then ui.view = "net"
@@ -480,7 +486,10 @@ end
 function T.keyInput(e, v)
     local ui = keyboardUI()
     if not ui then return end
-    if e == "key" and T.navKey(ui, v) then
+    local vk = T.VIEWKEY and T.VIEWKEY[ui.view]
+    if vk and vk(ui, e, v) then
+        T.render(ui)
+    elseif e == "key" and T.navKey(ui, v) then
         -- handled: keyboard navigation (basic computers have no mouse)
     elseif ui.view == "num" then
         if e == "char" and v:match("^[0-9%-]$") then T.numKey(ui, v)

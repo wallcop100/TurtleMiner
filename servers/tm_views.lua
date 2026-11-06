@@ -1,4 +1,4 @@
--- Version: 1.2.0
+-- Version: 1.3.0
 -- TurtleMiner server UI, part 2: the turtle card, command buttons, SET pickers (number,
 -- yes/no, focus ore), confirmations, the text / event log views and the mining network
 -- screen (NET: join requests to approve, show the join phrase after a confirmation, copy
@@ -84,7 +84,7 @@ local function confirm(ui, cmd)
 end
 
 local function cmdDefs(ui, r)
-    return {
+    local defs = {
         { "RETURN HOME", colors.orange, function() doCmd(ui, "RETURN_HOME") end },
         { "PAUSE", colors.yellow, function() doCmd(ui, "PAUSE") end, colors.black },
         { "RESUME", colors.green, function() doCmd(ui, "RESUME") end },
@@ -98,6 +98,11 @@ local function cmdDefs(ui, r)
         { "REBOOT", colors.red, function() confirm(ui, "REBOOT") end },
         { "BACK", colors.gray, function() ui.view = "list" end },
     }
+    if T.VIEWS.armies then
+        table.insert(defs, #defs, { "JOIN ARMY", colors.purple, function() ui.view = "armyjoin" end })
+        table.insert(defs, #defs, { "LEAVE ARMY", colors.purple, function() doCmd(ui, "ARMY_LEAVE") end })
+    end
+    return defs
 end
 
 local CORE_LINES = 12
@@ -324,6 +329,7 @@ local function renderNet(ui)
         defs[#defs + 1] = { "GPS", colors.blue, function() ui.view = "gps" end }
         defs[#defs + 1] = { "CLUSTER", colors.blue, function() ui.view = "cluster" end }
     end
+    if T.VIEWS.armies then defs[#defs + 1] = { "ARMY", colors.blue, function() ui.view = "armies" end } end
     defs[#defs + 1] = { "BACK", colors.gray, function() ui.view = "list"; ui.msg = nil end }
     local lines = netLines(ui)
     for _, r in ipairs(reqs) do

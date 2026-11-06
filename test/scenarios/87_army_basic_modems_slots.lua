@@ -21,15 +21,25 @@ return {
             A.joinTurtles(st, ld, "deep", 4, { equip = A.BASIC })
             A.runUntil(st, function() return A.done(rec) >= 4 end, 9000, (withRelay and "relay" or "slots") .. ": 4 branches done")
             A.assertClean(st, withRelay and "with relay" or "basic only")
-            return A.kinds(), A.done(rec)
+            -- a relay delivers copies of every message: count each booked slot once (by receiver and window)
+            local seen, slots = {}, 0
+            for _, e in ipairs(A.list) do
+                if e.msg.kind == "slot" then
+                    local k = tostring(e.to) .. ":" .. tostring(e.msg.at) .. ":" .. tostring(e.msg.shaft)
+                    if not seen[k] then seen[k] = true; slots = slots + 1 end
+                end
+            end
+            local kinds = A.kinds()
+            kinds.slot_unique = slots
+            return kinds, A.done(rec)
         end
         local k1, d1 = run(false)
         H.check((k1.slot_req or 0) > 0 and (k1.slot or 0) > 0, "basic modems only: no timed slots used (slot_req %d, slot %d)", k1.slot_req or 0, k1.slot or 0)
-        local s1 = k1.slot
+        local s1 = k1.slot_unique
         local k2, d2 = run(true)
         H.check((k2.seg_req or 0) > 0 and (k2.seg_grant or 0) > 0, "relay: no live reservations")
-        H.check((k2.slot or 0) < s1, "relay: still %d slots (basic-only run: %d)", k2.slot or 0, s1)
+        H.check((k2.slot_unique or 0) < s1, "relay: still %d slots (basic-only run: %d)", k2.slot_unique or 0, s1)
         return string.format("basic only: %d slot_req/%d slot, %d branches; relay: %d seg_req, %d slot, %d branches; 0 collisions both",
-            k1.slot_req or 0, s1, d1, k2.seg_req or 0, k2.slot or 0, d2)
+            k1.slot_req or 0, s1, d1, k2.seg_req or 0, k2.slot_unique or 0, d2)
     end,
 }
