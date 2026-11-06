@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- TurtleMiner update guard (docs/MESH_UPDATE_PLAN.md section 3). Small and self-contained on
 -- purpose: the startup files use it before anything else runs.
 --   * applyJournal(j): swap staged files in, keeping <file>.bak; every step is written to
@@ -47,6 +47,12 @@ function G.readRollback() return readT(RB) end
 function G.clearRollback() if fs.exists(RB) then fs.delete(RB) end end
 function G.pendingJournal() return fs.exists(JOURNAL) end
 function G.passed() if fs.exists(PROB) then fs.delete(PROB) end end
+-- The program ran fine for a while: a later restart (chunk unloaded, server restart, the player
+-- rebooting it) is not a boot loop, so the boot count starts over. Only quick reboots add up.
+function G.healthy()
+    local p = readT(PROB)
+    if p and (tonumber(p.boots) or 0) > 0 then p.boots = 0; writeT(PROB, p) end
+end
 
 -- j = {ids, items = {{path, stage}}, at, limit, kind, live}. Idempotent: safe to run again
 -- on a journal that was cut short.

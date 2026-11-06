@@ -1,4 +1,4 @@
--- Version: 1.1.2
+-- Version: 1.1.3
 -- TurtleMiner mesh updates (docs/MESH_UPDATE_PLAN.md sections 2-3, docs/PROTOCOL.md "Mesh
 -- updates"). One module for every device: turtles (net.lua), server PCs and pockets
 -- (tminer_server), relays (relay.lua) and the updater CLI.
@@ -28,6 +28,7 @@ M.FIRST_SCAN_MS = 2000
 M.SCAN_STEP = 24000         -- bytes hashed per step (CC kills code that never yields)
 M.PROBATION_MS = 300000       -- computers: 5 minutes after an update
 M.HOME_PROBATION_MS = 600000  -- turtles: first trip, or 10 minutes at home
+M.HEALTHY_MS = 60000         -- up this long without a crash: later restarts are not a boot loop
 M.SERVE_BURST, M.SERVE_EVERY_MS, M.SERVE_QUEUE = 4, 500, 16
 M.ORIGIN_HOLD_MS = 60000     -- the origin serves a minute before it installs (and restarts) itself
 M.DIR = ".tm_mesh/"
@@ -253,6 +254,7 @@ function M.new(o)
     local homeSince = nil
     local holdUntil = 0
     local probation = nil
+    local startedAt, healthyMarked = nil, false
     E.stats = { listsSent = 0, listsServed = 0, chunksSent = 0, chunksServed = 0, got = 0 }
 
     local function save() writeAtomic(STATE, ser(st)) end
@@ -949,6 +951,12 @@ function M.new(o)
         serveNext(t)
         startNext(t)
         if probation then
+            -- 60 s up without a crash: not a boot loop (see tmguard G.healthy)
+            startedAt = startedAt or t
+            if not healthyMarked and t - startedAt >= M.HEALTHY_MS then
+                healthyMarked = true
+                if G and G.healthy then pcall(G.healthy) end
+            end
             if probation.limit and t - (probation.at or 0) >= probation.limit then endProbation("5 min ok")
             elseif isTurtle and o.atHome then
                 local okH, home = pcall(o.atHome)
