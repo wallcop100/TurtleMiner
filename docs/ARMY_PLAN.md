@@ -190,3 +190,6 @@ Batch 1 and 2 each run two agents side by side; nothing in a batch edits the sam
 2. **Server location:** usually near the mine, but must work at a distant base too. The "never reassign a silent turtle's claims or segments" rule covers both.
 3. **GPS nodes:** hardware is ready. `gpsnode` still gets written for health reporting and easy setup, and can adopt an existing `gps host` computer (reads its startup coordinates).
 4. **Joining without GPS:** carrying it to the station is fine.
+
+## Known issue (2026-11-06)
+Large armies (about 6+ turtles) can jam: turtles meeting head-on in the 1-wide spine/corridors have no right-of-way rule yet, and with live contact turtles can pile up at the top shaft column. Scenario 85 (10 turtles, second shaft) fails for this reason. Small armies (scenarios 84, 86-89, 96) pass.
