@@ -253,3 +253,4 @@ Status key: `TODO` · `DOING` · `BLOCKED` · `REVIEW` · `DONE`
 - 2026-11-06: army merged to main with known issue: big armies jam (scenario 85 fails); see ARMY_PLAN.md Known issue.
 - 2026-11-06: GPS 'Later' had no way back for 6 h: GPS page now has OFFER NOW, footer shows 'GPS later' (scenario 71).
 - 2026-11-06: GPS layout reason was never published to replicas (page said only 'Not running'); now published, worded for players, wrapped on the GPS page (scenario 70).
+- 2026-11-06: false rollback 'rebooted N times': restarts after 60 s of healthy running (chunk unload, server restart) no longer count towards the boot-loop limit (tmguard G.healthy; scenario 97). tm_gps bumped to 1.0.5 to clear the bad mark.
