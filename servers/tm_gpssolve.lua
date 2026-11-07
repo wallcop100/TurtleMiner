@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- TurtleMiner GPS maths (docs/CLUSTER_GPS_PLAN.md section 3): pure functions, no I/O.
 -- Distances are measured between computer blocks: a CC:Tweaked wireless modem reports the
 -- position of the block it is attached to (see tm_gps.lua), so every position here is the

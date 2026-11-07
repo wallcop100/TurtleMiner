@@ -1,4 +1,4 @@
--- Version: 1.0.1
+-- Version: 1.0.2
 -- TurtleMiner server, database part: shared state, files, event log, turtle records, the
 -- command queue (store-and-forward) and the replication format (snapshot / delta).
 -- Loaded by tminer_server.lua (or central_monitor.lua) into the shared table T:

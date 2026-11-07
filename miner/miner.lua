@@ -1,4 +1,4 @@
--- Version: 1.6.0
+-- Version: 1.6.1
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
@@ -860,8 +860,43 @@ local function work()
 end
 H.TO_WORK, H.MINING, H.VEIN = work, work, work
 
+-- A no-GPS turtle waiting at home with no job progress switches to GPS as soon as a fix is
+-- available (GPS hosts may come up after the turtle booted). Not mid-job: the frame would change.
+local lastGpsTry = -1e9
+local calibrateOrHelp          -- defined below
+local function adoptGps()
+    if st.gps or not atHome() or not nav.gpsLocate then return false end
+    local now = os.clock()
+    if now - lastGpsTry < 60 then return false end
+    lastGpsTry = now
+    if st.lost and st.lost ~= NEED_HOME_Y then return false end
+    local j = type(st.job) == "table" and st.job or {}
+    if (tonumber(j.corridor) or 0) ~= 0 or (tonumber(j.branch) or 0) ~= 0 or (tonumber(j.step) or 0) ~= 0 then
+        return false
+    end
+    st.gps = true
+    local p = nav.gpsLocate(true, false)
+    if not p then st.gps = false; return false end
+    local oldLost = st.lost
+    local oldPos, oldHome, oldFacing, oldHF = copyPos(st.pos), copyPos(st.home), st.facing, st.homeFacing
+    st.pos, st.home = copyPos(p), copyPos(p)
+    local ok = calibrateOrHelp()
+    if not ok then
+        st.gps, st.pos, st.home, st.facing, st.homeFacing, st.lost, helpRetry = false, oldPos, oldHome, oldFacing, oldHF, oldLost, nil
+        return false
+    end
+    st.homeFacing = st.facing
+    if st.lost == NEED_HOME_Y then st.lost = nil end
+    save()
+    sendHello()
+    sendHomeSave()
+    net.event("info", "GPS found: switched to world coordinates, home " .. p.x .. "," .. p.y .. "," .. p.z)
+    return true
+end
+
 local function idleLike(onResume)
     local isDone = st.phase == "DONE"
+    adoptGps()
     if atHome() and (st.flags.update or meshReady()) then runUpdate(st.phase, st.reason) end
     waitFor(cfg.HELP_RETRY or 30, function() return atHome() and (st.flags.update or meshReady()) end)
     if req.homeReset then req.homeReset = false; return "IDLE", "home reset" end
@@ -900,6 +935,7 @@ end
 
 H.NEEDS_HELP = function()
     waitFor(cfg.HELP_RETRY or 30)
+    if st.lost == NEED_HOME_Y and adoptGps() then helpRetry = nil; return "UNLOADING", "GPS found" end
     if req.homeReset then req.homeReset = false; helpRetry = nil; return "IDLE", "home reset" end
     if req.resume then
         req.resume = false
@@ -953,7 +989,7 @@ local function initModules()
     group.init(st, cfg, nav, inv, mine, net, ctl)
 end
 
-local function calibrateOrHelp()
+function calibrateOrHelp()
     local ok, reason = nav.calibrateFacing()
     if ok then return true end
     local why = "facing unknown: " .. tostring(reason)
