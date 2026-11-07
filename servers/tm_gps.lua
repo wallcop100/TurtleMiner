@@ -1,4 +1,4 @@
--- Version: 1.0.5
+-- Version: 1.0.6
 -- TurtleMiner GPS constellation from the server PCs (docs/CLUSTER_GPS_PLAN.md section 3).
 -- Offered, never required. The cluster leader counts the PCs with a wireless or ender modem;
 -- with >= 4 and a good layout (measured, not coplanar, >= 6 blocks apart) it offers
@@ -61,8 +61,7 @@ G.DRIFT_MS = 600000                      -- re-measure period (10 min; tests sho
 -- Persistence
 -- ---------------------------------------------------------------------------
 local function save()
-    local h = fs.open(FILE, "w")
-    if h then h.write(textutils.serialize(V)); h.close() end
+    T.writeAtomic(FILE, textutils.serialize(V))
 end
 local function load()
     local h = fs.open(FILE, "r")
@@ -518,7 +517,13 @@ local function answer(m, t)
         if not (x and y and z) then return reply(m.from, false, "need three numbers: X Y Z") end
         local p = { x = math.floor(x + 0.5), y = math.floor(y + 0.5), z = math.floor(z + 0.5) }
         local err = M.checkEntry(m.from, p, L.known, rs.D)
-        if err then return reply(m.from, false, err) end
+        if err then
+            local dd = {}
+            for k, v in pairs(rs.D) do dd[#dd + 1] = string.format("%s=%.2f", k, v) end
+            table.sort(dd)
+            T.logLine("GPS: entry rejected from #" .. m.from .. ": " .. err .. " | measured " .. table.concat(dd, " "))
+            return reply(m.from, false, err)
+        end
         L.known[m.from] = p
     else
         local v = tonumber(m.x)

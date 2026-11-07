@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- TurtleMiner GPS maths (docs/CLUSTER_GPS_PLAN.md section 3): pure functions, no I/O.
 -- Distances are measured between computer blocks: a CC:Tweaked wireless modem reports the
 -- position of the block it is attached to (see tm_gps.lua), so every position here is the
@@ -173,7 +173,8 @@ function M.checkEntry(id, p, known, D)
             if want then
                 local got = M.dist(p, q)
                 if abs(got - want) > M.TOL then
-                    return string.format("doesn't match: distance to PC #%d should be %.1f, these coordinates give %.1f", j, want, got)
+                    return string.format("doesn't match: distance to PC #%d should be %.1f, these coordinates give %.1f (PC #%d is stored at %d %d %d, you gave %d %d %d)",
+                        j, want, got, j, q.x, q.y, q.z, p.x, p.y, p.z)
                 end
             end
         end
