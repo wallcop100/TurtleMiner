@@ -61,8 +61,7 @@ G.DRIFT_MS = 600000                      -- re-measure period (10 min; tests sho
 -- Persistence
 -- ---------------------------------------------------------------------------
 local function save()
-    local h = fs.open(FILE, "w")
-    if h then h.write(textutils.serialize(V)); h.close() end
+    T.writeAtomic(FILE, textutils.serialize(V))
 end
 local function load()
     local h = fs.open(FILE, "r")

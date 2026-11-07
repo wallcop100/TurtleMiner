@@ -88,12 +88,25 @@ function T.isLeader() return S.mode == "server" and T.C ~= nil and T.C.role == "
 -- ---------------------------------------------------------------------------
 local function writeAtomic(path, text)
     local tmp = path .. ".tmp"
-    local h = fs.open(tmp, "w")
-    if not h then return false end
-    h.write(text)
-    h.close()
-    if fs.exists(path) then fs.delete(path) end
-    fs.move(tmp, path)
+    -- A full disk makes write() throw ("Out of space"): keep the old file and carry on.
+    local ok = pcall(function()
+        local h = fs.open(tmp, "w")
+        if not h then error("open failed") end
+        local wok, werr = pcall(h.write, text)
+        h.close()
+        if not wok then error(werr) end
+        if fs.exists(path) then fs.delete(path) end
+        fs.move(tmp, path)
+    end)
+    if not ok then
+        pcall(fs.delete, tmp)
+        if not T.diskFullWarned then
+            T.diskFullWarned = true
+            pcall(function() T.logLine("DISK: cannot write " .. path .. " (out of space?). Free space on this computer.") end)
+        end
+        return false
+    end
+    T.diskFullWarned = nil
     return true
 end
 T.writeAtomic = writeAtomic
