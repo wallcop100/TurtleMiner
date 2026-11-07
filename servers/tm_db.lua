@@ -1,4 +1,4 @@
--- Version: 1.0.2
+-- Version: 1.0.3
 -- TurtleMiner server, database part: shared state, files, event log, turtle records, the
 -- command queue (store-and-forward) and the replication format (snapshot / delta).
 -- Loaded by tminer_server.lua (or central_monitor.lua) into the shared table T:
@@ -86,7 +86,7 @@ function T.isLeader() return S.mode == "server" and T.C ~= nil and T.C.role == "
 -- ---------------------------------------------------------------------------
 -- Files (atomic write: tmp + move)
 -- ---------------------------------------------------------------------------
-local function writeAtomic(path, text)
+local function writeAtomic(path, text, retried)
     local tmp = path .. ".tmp"
     -- A full disk makes write() throw ("Out of space"): keep the old file and carry on.
     local ok = pcall(function()
@@ -100,6 +100,11 @@ local function writeAtomic(path, text)
     end)
     if not ok then
         pcall(fs.delete, tmp)
+        -- free old update copies (.bak, leftovers) once and try again
+        if not retried and T.Mesh and T.Mesh.reclaim then
+            local rok, freed = pcall(T.Mesh.reclaim, #text + 30000)
+            if rok then return writeAtomic(path, text, true) end
+        end
         if not T.diskFullWarned then
             T.diskFullWarned = true
             pcall(function() T.logLine("DISK: cannot write " .. path .. " (out of space?). Free space on this computer.") end)
