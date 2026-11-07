@@ -173,7 +173,8 @@ function M.checkEntry(id, p, known, D)
             if want then
                 local got = M.dist(p, q)
                 if abs(got - want) > M.TOL then
-                    return string.format("doesn't match: distance to PC #%d should be %.1f, these coordinates give %.1f", j, want, got)
+                    return string.format("doesn't match: distance to PC #%d should be %.1f, these coordinates give %.1f (PC #%d is stored at %d %d %d, you gave %d %d %d)",
+                        j, want, got, j, q.x, q.y, q.z, p.x, p.y, p.z)
                 end
             end
         end
