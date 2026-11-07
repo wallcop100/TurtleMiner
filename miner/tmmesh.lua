@@ -1,4 +1,4 @@
--- Version: 1.1.3
+-- Version: 1.1.4
 -- TurtleMiner mesh updates (docs/MESH_UPDATE_PLAN.md sections 2-3, docs/PROTOCOL.md "Mesh
 -- updates"). One module for every device: turtles (net.lua), server PCs and pockets
 -- (tminer_server), relays (relay.lua) and the updater CLI.
@@ -156,17 +156,25 @@ local function firstLine(path)
 end
 
 local function writeAtomic(path, text)
-    local dir = fs.getDir(path)
-    if dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
-    local tmp = path .. ".tmp"
-    if fs.exists(tmp) then fs.delete(tmp) end
-    local f = fs.open(tmp, "w")
-    if not f then return false end
-    f.write(text)
-    f.close()
-    if fs.exists(path) then fs.delete(path) end
-    fs.move(tmp, path)
-    return true
+    for attempt = 1, 2 do
+        local ok = pcall(function()
+            local dir = fs.getDir(path)
+            if dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
+            local tmp = path .. ".tmp"
+            if fs.exists(tmp) then fs.delete(tmp) end
+            local f = fs.open(tmp, "w")
+            if not f then error("open failed") end
+            local wok, werr = pcall(f.write, text)
+            f.close()
+            if not wok then pcall(fs.delete, tmp); error(werr) end
+            if fs.exists(path) then fs.delete(path) end
+            fs.move(tmp, path)
+        end)
+        if ok then return true end
+        -- full disk: free old .bak / leftover files once (set by init), then retry
+        if attempt == 1 and M.reclaim then pcall(M.reclaim, #text + 30000) end
+    end
+    return false
 end
 M.writeAtomic = writeAtomic
 
@@ -226,6 +234,7 @@ function M.new(o)
     local C = o.crypto or loadMod("tmcrypto")
     local G = o.guard or loadMod("tmguard")
     E.G = G
+    if G and G.reclaim then M.reclaim = G.reclaim end
     local signer = (o.key and C) and C.signer({ name = "mesh", key = o.key }) or nil
     local now = o.now or function() return os.epoch("utc") end
     local log = o.log or function() end
@@ -921,8 +930,18 @@ function M.new(o)
     function E.tripDone() if probation then endProbation("trip done") end end
 
     -- ------------------------------------------------------------------ tick
+    local lastSpace = -1e12
     function E.tick()
         local t = now()
+        -- every 5 min (and at the first tick): below MIN_FREE, drop leftovers and old .bak copies
+        if G and G.free and t - lastSpace >= 300000 then
+            lastSpace = t
+            local f = G.free()
+            if f and f < G.MIN_FREE then
+                local freed = G.reclaim()
+                log("low disk space (" .. f .. " bytes free): cleaned up " .. tostring(freed) .. " bytes")
+            end
+        end
         if scanAt or (not lastScan and t - bootAt >= M.FIRST_SCAN_MS) or (lastScan and t - lastScan >= M.SCAN_MS) then
             E.scanStep(M.SCAN_STEP)
         end

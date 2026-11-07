@@ -1,4 +1,4 @@
--- Version: 1.0.1
+-- Version: 1.1.0
 -- TurtleMiner update guard (docs/MESH_UPDATE_PLAN.md section 3). Small and self-contained on
 -- purpose: the startup files use it before anything else runs.
 --   * applyJournal(j): swap staged files in, keeping <file>.bak; every step is written to
@@ -29,17 +29,104 @@ local function readT(path)
     return nil
 end
 
+-- Free bytes on the computer, or nil when unknown.
+function G.free()
+    local ok, n = pcall(fs.getFreeSpace, "/")
+    return ok and type(n) == "number" and n or nil
+end
+G.MIN_FREE = 30000   -- keep this much free: below it old .bak copies are dropped
+
+local function sizeOf(path)
+    local ok, n = pcall(fs.getSize, path)
+    return ok and n or 0
+end
+
+-- Frees space automatically: leftover .new/.tmp files, orphan staged files and, when still
+-- short, the .bak copies of earlier versions (except those a running probation may restore).
+-- want: free bytes to reach (default MIN_FREE). Returns bytes freed.
+function G.reclaim(want)
+    want = want or G.MIN_FREE
+    local before = G.free()
+    local keep = {}
+    local prob = fs.exists(PROB) and (function()
+        local f = fs.open(PROB, "r"); if not f then return nil end
+        local str = f.readAll(); f.close()
+        local ok, v = pcall(textutils.unserialize, str or "")
+        return ok and type(v) == "table" and v or nil
+    end)() or nil
+    for _, it in ipairs(prob and prob.items or {}) do keep[it.path .. ".bak"] = true end
+    local journal = fs.exists(JOURNAL)
+    local function done() local f = G.free(); return f and f >= want end
+    local function walk(dir, fn, depth)
+        if depth > 3 then return end
+        local ok, list = pcall(fs.list, dir)
+        if not ok then return end
+        for _, name in ipairs(list) do
+            local path = (dir == "" or dir == "/") and name or (dir .. "/" .. name)
+            if name ~= "rom" and path ~= "rom" then
+                if fs.isDir(path) then walk(path, fn, depth + 1) else fn(path, name) end
+            end
+        end
+    end
+    -- 1. leftovers of interrupted writes (never while a journal is being applied)
+    if not journal then
+        walk("", function(path, name)
+            if name:match("%.new$") or name:match("%.tmp$") then pcall(fs.delete, path) end
+        end, 0)
+    end
+    -- 2. orphan staged files (tmmesh forgets the ones it no longer lists at its next scan)
+    if not done() and not journal then
+        local sd = G.DIR .. "stage"
+        if fs.isDir(sd) then
+            for _, name in ipairs(fs.list(sd)) do pcall(fs.delete, sd .. "/" .. name) end
+        end
+    end
+    -- 3. old versions, biggest first, until enough is free
+    if not done() then
+        local baks = {}
+        walk("", function(path, name)
+            if name:match("%.bak$") and not keep[path] then baks[#baks + 1] = { path = path, size = sizeOf(path) } end
+        end, 0)
+        table.sort(baks, function(a, b) return a.size > b.size end)
+        for _, b in ipairs(baks) do
+            if done() then break end
+            pcall(fs.delete, b.path)
+        end
+    end
+    local after = G.free()
+    return (before and after) and math.max(0, after - before) or 0
+end
+
+-- True when `need` bytes (plus the safety margin) can be written, reclaiming if necessary.
+function G.ensure(need)
+    local f = G.free()
+    if not f then return true end
+    if f >= need + G.MIN_FREE then return true end
+    G.reclaim(need + G.MIN_FREE)
+    f = G.free()
+    return f == nil or f >= need + 2000
+end
+
+-- Atomic, never throws on a full disk: reclaims once and retries, else keeps the old file.
 local function writeT(path, t)
-    if not fs.exists(G.DIR) then fs.makeDir(G.DIR) end
-    local tmp = path .. ".tmp"
-    if fs.exists(tmp) then fs.delete(tmp) end
-    local f = fs.open(tmp, "w")
-    if not f then return false end
-    f.write(textutils.serialize(t))
-    f.close()
-    if fs.exists(path) then fs.delete(path) end
-    fs.move(tmp, path)
-    return true
+    local text = textutils.serialize(t)
+    for attempt = 1, 2 do
+        local ok = pcall(function()
+            if not fs.exists(G.DIR) then fs.makeDir(G.DIR) end
+            local tmp = path .. ".tmp"
+            if fs.exists(tmp) then fs.delete(tmp) end
+            local f = fs.open(tmp, "w")
+            if not f then error("open failed") end
+            local wok, werr = pcall(f.write, text)
+            f.close()
+            if not wok then pcall(fs.delete, tmp); error(werr) end
+            if fs.exists(path) then fs.delete(path) end
+            fs.move(tmp, path)
+        end)
+        if ok then return true end
+        if attempt == 1 then G.reclaim(#text + G.MIN_FREE) end
+    end
+    return false
 end
 
 function G.probation() return readT(PROB) end
@@ -57,7 +144,14 @@ end
 -- j = {ids, items = {{path, stage}}, at, limit, kind, live}. Idempotent: safe to run again
 -- on a journal that was cut short.
 function G.applyJournal(j)
-    writeT(JOURNAL, j)
+    if not j.started then
+        -- Room for the staged copy, a .bak and the .new of every file, before touching anything.
+        local need = 0
+        for _, it in ipairs(j.items) do need = need + 2 * sizeOf(it.stage) end
+        if not G.ensure(need) then error("not enough disk space to install the update (need " .. need .. " bytes)", 0) end
+        j.started = true
+    end
+    if not writeT(JOURNAL, j) then error("cannot write the update journal (disk full?)", 0) end
     for _, it in ipairs(j.items) do
         if not it.done then
             if not it.bakDone then
