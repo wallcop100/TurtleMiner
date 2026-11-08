@@ -14,13 +14,13 @@ All commands need CC's HTTP API (on by default). `BASE` below means `https://raw
 
 1. **Main computer** (with a modem; a monitor is optional):
    ```
-   wget run BASE/setup.lua server
+   wget run https://raw.githubusercontent.com/wallcop100/TurtleMiner/main/setup.lua server
    reboot
    ```
    Setup asks you to **create a mining network** and shows its 4-word join phrase: write it down (see [Mining network](#mining-network)).
 2. **Each turtle**, standing on its home spot with a chest behind or beside it:
    ```
-   wget BASE/miner/install.lua install.lua
+   wget https://raw.githubusercontent.com/wallcop100/TurtleMiner/main/miner/install.lua install.lua
    install
    ```
    Join the network first (type the 4 words, use a floppy disk, or approve it on the monitor), then answer the questions (name, mining Y, ore, corridors, and the home Y if there's no GPS). It starts mining after a reboot. `install` fetches its network files (`tmcrypto`, `tmwords`, `tmjoin`) from GitHub when they're missing.
