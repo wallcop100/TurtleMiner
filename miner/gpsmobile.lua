@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.1.0
 -- Mobile GPS host (AR-G): a turtle that knows its world position answers GPS pings like
 -- `gps host`, between moves only. Called from net.lua's raw modem_message dispatch.
 -- Answers only when: st.gps (world coordinates) or an army frame, not lost, facing known, no
@@ -36,6 +36,9 @@ function M.position()
     if cfg and cfg.MOBILE_GPS == false then return nil end
     if not (st.gps or st.army ~= nil) then return nil end
     if st.lost or st.facingUnknown then return nil end
+    -- only a position a GPS fix (or the army station) confirmed since the last guess; an
+    -- unchecked journal would spread its error to every turtle that pings
+    if not st.fixOk then return nil end
     if nav.moving and nav.moving() then return nil end
     local p = st.pos
     if type(p.x) ~= "number" or type(p.y) ~= "number" or type(p.z) ~= "number" then return nil end

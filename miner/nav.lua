@@ -1,4 +1,4 @@
--- Version: 1.2.0
+-- Version: 1.3.0
 -- TurtleMiner navigation: journaled moves/turns, retrying dig/attack, goTo, crash recovery,
 -- GPS sync and facing calibration.
 --
@@ -84,6 +84,8 @@ local gpsFailY = nil        -- st.pos.y of the last failed gps.locate (see nav.g
 local inFlight = false      -- a journaled move/turn is between its intent line and its done line
 local fixRejected = nil     -- text of the last rejected GPS fix (logged once)
 local GPS_TRUST = 2         -- a fix must be within this many blocks of a trusted journal position
+local FAR_REPEAT = 3        -- ...unless this many fixes in a row agree on the same offset
+local farOff, farCount = nil, 0
 
 local DX = { [0] = 0, [1] = 1, [2] = 0, [3] = -1 }
 local DZ = { [0] = -1, [1] = 0, [2] = 1, [3] = 0 }
@@ -454,11 +456,26 @@ function nav.gpsLocate(force, ref)
     -- a fresh state (phase BOOT, nothing journaled yet) has no position to trust
     if ref == nil and not st.lost and not st.facingUnknown and st.phase ~= "BOOT" then ref = st.pos end
     if type(ref) == "table" and ref.x and ref.y and ref.z and nav.dist(fix, ref) > GPS_TRUST then
+        -- The journal can be wrong too. FAR_REPEAT fixes in a row that put the turtle at the
+        -- same offset from its journal (within 1 block) are taken as the truth.
+        st.fixOk = nil       -- one of us is wrong: stop answering GPS pings until settled
+        local off = { x = fix.x - ref.x, y = fix.y - ref.y, z = fix.z - ref.z }
+        if farOff and nav.dist(farOff, off) <= 1 then farCount = farCount + 1 else farOff, farCount = off, 1 end
+        if farCount >= FAR_REPEAT then
+            event("warn", "GPS fix " .. fix.x .. "," .. fix.y .. "," .. fix.z .. " repeated " .. farCount
+                .. " times, journal " .. ref.x .. "," .. ref.y .. "," .. ref.z .. " corrected")
+            farOff, farCount, fixRejected = nil, 0, nil
+            st.fixOk = true
+            return fix
+        end
         local msg = "GPS fix " .. fix.x .. "," .. fix.y .. "," .. fix.z .. " disagrees with journal "
             .. ref.x .. "," .. ref.y .. "," .. ref.z .. ", journal kept"
         if fixRejected ~= msg then fixRejected = msg; event("warn", msg) end
         return nil
     end
+    farOff, farCount = nil, 0
+    -- a fix checked against a trusted journal position: this turtle may host mobile GPS
+    if type(ref) == "table" and ref.x then st.fixOk = true end
     return fix
 end
 
@@ -933,6 +950,8 @@ function nav.recover(stIn)
             end
         end
         if posUnknown then return fail(reasonPos .. sfx) end
+        -- recovered without GPS by guessing: don't answer GPS pings until a fix confirms it
+        if rolledBack or turnByInspect or movePending or facingDoubt then st.fixOk = nil end
         if facingDoubt and nOffs == 1 then
             st.facing = (st.facing + offsetList(offs)[1]) % 4
         elseif facingDoubt then

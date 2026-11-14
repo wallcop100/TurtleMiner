@@ -58,7 +58,7 @@ Tracked in [TRACKING.md](TRACKING.md) under "Cluster + GPS". Builds on the comms
 
 **Hosting.** Once solved, every eligible PC runs the GPS host loop on its wireless or ender modem, alongside its other roles. The monitor's GPS page shows hosts, each one's state, and the coverage estimate (from host heights and modem kinds).
 
-**Drift: fix or pause automatically.** Hosts re-measure each other every 10 minutes, and whenever a cluster member reboots or reappears. If a host's distances stop matching (PC moved or broken), the leader re-solves silently. If that isn't possible, that PC **stops hosting**, so it can't give wrong fixes, and the monitor shows why. If too few hosts remain, GPS stops cleanly (turtles fall back to blind mode) and the offer reappears when it can work again.
+**Drift: fix or pause automatically.** Hosts re-measure each other every 10 minutes, and whenever a cluster member reboots or reappears. If a host's distances stop matching (PC moved or broken), the leader re-solves silently. If that isn't possible, that PC **stops hosting**, so it can't give wrong fixes, and the monitor shows why. If too few hosts remain, every host is paused (nobody answers; turtles fall back to blind mode) but the positions are kept, and GPS resumes on its own when enough PCs match them again (STOP on the GPS page forgets them). A new leader waits 70 s for the other PCs to report before re-measuring, so a cluster restart never needs a new set-up.
 
 ### 4. Turtles
 

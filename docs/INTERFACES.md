@@ -36,6 +36,9 @@ st = {
               moveSec, tripSec, lastTripSec,       -- measured: s per fuel unit, full-trip lengths (s)
               tripStart, tripFuel0, tripNatural},  -- current trip (cleared on arrival home)
   lastError= string|nil,
+  fixOk    = bool|nil,      -- position confirmed by a GPS fix that agreed with the journal (or 3 matching
+                            -- far fixes, or a no-GPS army station). Cleared by a disagreeing fix or a recovery
+                            -- that guessed. gpsmobile hosts and GPS samples are sent only while true.
 }
 ```
 
