@@ -1,12 +1,12 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- Scenario 74 (CG-3): drift. A 5 PC constellation (set up silently from another GPS) keeps
 -- measuring itself every 10 minutes and whenever a member reboots.
 --   a) a host moved 6 blocks: re-solved silently from the other four, position updated.
 --   b) a host moved out of everyone's range and rebooted: PAUSED (stops answering, the GPS
 --      page says why), the other four keep hosting.
 --   c) it comes back and reboots: resumes.
---   d) two hosts gone: too few, GPS stops cleanly (nobody answers) and the offer returns
---      when they are back.
+--   d) two hosts gone: too few, every host is PAUSED (nobody answers) but the positions are
+--      kept; when they are back GPS resumes on its own, no new set-up.
 local function pc(id, x, y, z, mon)
     local o = { id = id, pos = { x = x, y = y, z = z }, modems = { { side = "back", kind = "basic" } } }
     if mon then o.monitor = { side = "top", w = 39, h = 14 } end
@@ -66,13 +66,16 @@ return {
         D.c.pos.x, E.c.pos.x = 400, 450
         D.kill(); E.kill(); sim.run({ maxTime = 2 }); D.boot(); E.boot()
         sim.run({ maxTime = 110 })
-        H.check(V.st ~= "on" and next(V.hosts) == nil, "GPS still on with too few hosts: %s", V.st)
         for _, S in ipairs(all) do H.check(not S.T.gps.wanted(), "#%d still answers GPS pings", S.c.id) end
-        H.check(A.logText():find("too few usable hosts", 1, true), "no log line")
+        H.check(V.hosts[1] and V.hosts[1].st == "paused" and V.hosts[5] and V.hosts[5].x == -28,
+            "hosts not kept as paused: %s", tostring(V.hosts[1] and V.hosts[1].st))
+        H.check(A.logText():find("too few usable hosts, paused", 1, true), "no log line")
         D.c.pos.x, E.c.pos.x = 5, -28
         D.kill(); E.kill(); sim.run({ maxTime = 2 }); D.boot(); E.boot()
-        sim.run({ maxTime = 90 })
-        H.check(V.st == "offer" and V.n == 5, "offer did not come back: %s %s", V.st, tostring(V.note))
-        return "moved host re-solved silently; lost host paused (page says why) then resumed; 2 lost -> GPS stops cleanly, offer returns"
+        sim.run({ maxTime = 150 })
+        H.check(V.st == "on", "GPS not back: %s %s", V.st, tostring(V.note))
+        for id = 1, 5 do H.check(V.hosts[id].st == "hosting", "#%d not resumed: %s", id, tostring(V.hosts[id].st)) end
+        for _, S in ipairs(all) do H.check(S.T.gps.wanted(), "#%d does not answer GPS pings", S.c.id) end
+        return "moved host re-solved silently; lost host paused (page says why) then resumed; 2 lost -> all paused, positions kept, resumed without set-up"
     end,
 }

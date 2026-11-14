@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- Scenario 94 (AR-G): mobile GPS. a) A turtle at depth with no GPS hosts at all gets an exact
 -- fix from 4 working turtles that know their world position (different heights/positions).
 -- b) A host that is lost, or mid-move, does not answer: with only 3 usable hosts there is no fix.
@@ -12,6 +12,7 @@ local cfg = textutils.unserialize(fs.open("host.cfg", "r").readAll())
 local state, nav, net = require("state"), require("nav"), require("net")
 local gm = require("gpsmobile")
 local st = state.new(cfg.pos, 1, true)
+st.fixOk = true   -- position confirmed by a GPS fix (gpsmobile only hosts confirmed positions)
 local HOST = { st = st, mid = {} }
 _G.HOST = HOST
 nav.init(st, { shouldAbort = function() return false end, onMove = function() end, save = function() return true end })

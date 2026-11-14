@@ -1,4 +1,4 @@
--- Version: 1.0.6
+-- Version: 1.1.0
 -- TurtleMiner GPS constellation from the server PCs (docs/CLUSTER_GPS_PLAN.md section 3).
 -- Offered, never required. The cluster leader counts the PCs with a wireless or ender modem;
 -- with >= 4 and a good layout (measured, not coplanar, >= 6 blocks apart) it offers
@@ -223,12 +223,22 @@ local function eligible(t)
 end
 
 local function newLeaderState(t)
-    L = { D = {}, lastEval = 0, lastMeasure = t, dirty = true, known = {}, nextEval = 0 }
+    -- since: a new leader (fresh boot, or an election) waits INFO_LIVE_MS for the other PCs'
+    -- gps_info before re-measuring a running constellation, or it would pause hosts it simply
+    -- hasn't heard from yet (and stop GPS with "too few hosts")
+    L = { D = {}, lastEval = 0, lastMeasure = t, dirty = true, known = {}, nextEval = 0, since = t }
     if V.st ~= "on" then V.st = "idle"; V.asks = {}; V.offer = nil end
 end
 
 local function startMeasure(t, purpose)
     local ids = eligible(t)
+    if purpose == "drift" then
+        -- wait for every saved host too (up to the round timeout), not only the PCs heard lately
+        local seen = {}
+        for _, id in ipairs(ids) do seen[id] = true end
+        for id in pairs(V.hosts) do if not seen[id] then ids[#ids + 1] = id end end
+        table.sort(ids)
+    end
     local round = math.floor(t / 1000)
     L.rnd = { id = round, at = t, purpose = purpose, expect = ids, got = {} }
     L.dirty = false
@@ -424,6 +434,15 @@ local function measured(t)
                 pos[cul] = nil
             end
         end
+        -- every host paused (GPS was stopped for too few hosts): resume them together when the
+        -- reporting ones match their saved positions again
+        local anyOn = false
+        for _, id in ipairs(check) do if V.hosts[id].st == "hosting" then anyOn = true end end
+        if not anyOn and #check >= 4 and #M.mismatches(pos, D, check) == 0 and M.layout(check, D) then
+            for _, id in ipairs(check) do V.hosts[id].st, V.hosts[id].why = "hosting", nil end
+            V.note = nil
+            T.logLine("GPS: " .. #check .. " hosts back, GPS resumed")
+        end
         -- a paused PC that matches again resumes
         for _, id in ipairs(check) do
             local h = V.hosts[id]
@@ -455,10 +474,15 @@ local function measured(t)
             okSet = P ~= nil
         end
         if not okSet then
-            T.logLine("GPS: too few usable hosts, stopped")
-            V.hosts, V.st, V.offer, V.asks = {}, "idle", nil, {}
-            V.note = "stopped: too few hosts"
-            L.lastEval = 0
+            -- pause, don't forget: the saved positions come back when the PCs do (a restart of
+            -- the whole cluster must not need a new set-up). STOP on the GPS page forgets them.
+            local any = false
+            for _, id in ipairs(hosts) do
+                local h = V.hosts[id]
+                if h.st == "hosting" then any = true; h.st, h.why = "paused", "too few hosts answering" end
+            end
+            if any then T.logLine("GPS: too few usable hosts, paused") end
+            V.note = "paused: too few hosts answering"
         end
         publish(t)
     end
@@ -490,7 +514,9 @@ local function leaderTick(t)
         local live = {}
         for _, id in ipairs(eligible(t)) do live[id] = true end
         for id, h in pairs(V.hosts) do if h.st == "hosting" and not live[id] then L.dirty = true end end
-        if L.dirty or t - L.lastMeasure >= G.DRIFT_MS then startMeasure(t, "drift") end
+        if t - (L.since or 0) < INFO_LIVE_MS then
+            -- just became leader: let the other PCs report first
+        elseif L.dirty or t - L.lastMeasure >= G.DRIFT_MS then startMeasure(t, "drift") end
     elseif V.st == "setup" and L.setup and L.setup.phase == "locate" and t - L.setup.at >= 4500 then
         L.setup.phase = "solve"
         for id, p in pairs(L.fixes or {}) do L.known[id] = p end
@@ -666,7 +692,8 @@ function G.status()
     local t = now()
     local n = #eligible(t)
     local hosts = 0
-    for _ in pairs(V.hosts or {}) do hosts = hosts + 1 end
+    for _, h in pairs(V.hosts or {}) do if h.st == "hosting" then hosts = hosts + 1 end end
+    if V.st == "on" and hosts == 0 then return "GPS paused", false end
     if V.st == "on" then return "GPS on " .. hosts .. "h", hosts >= 4 end
     if V.st == "offer" then return "GPS? " .. (V.n or n) .. "pc", true end
     if V.st == "asking" then return "GPS F3?", true end

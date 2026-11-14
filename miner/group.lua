@@ -1,4 +1,4 @@
--- Version: 1.0.0
+-- Version: 1.0.1
 -- TurtleMiner army (group) mode, turtle side. See docs/ARMY_PLAN.md "Contracts (batch 0)".
 --   group.init(st, cfg, nav, inv, mine, net, ctl)
 --   group.active() / group.leaving() / group.wantJoin()
@@ -106,6 +106,9 @@ function group.join(name)
     st.facing, st.homeFacing = s.f % 4, s.f % 4
     st.job = { corridor = 0, branch = 0, side = "L", step = 0, noGrid = true }
     st.lost, st.facingUnknown, st.facingCands, st.homeMarks = nil, nil, nil, nil
+    -- no GPS: the station is this army's frame, so the turtle may answer GPS pings from it.
+    -- With GPS, st.fixOk stays as nav set it (a fix that agreed with the journal).
+    if not st.gps then st.fixOk = true end
     local okS, state = pcall(require, "state")
     if okS and state.save then pcall(state.save, st, true) end
     mine.armyMode(true)

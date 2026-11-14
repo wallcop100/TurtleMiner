@@ -1,4 +1,4 @@
--- Version: 1.6.1
+-- Version: 1.7.0
 -- TurtleMiner main program. Two coroutines only:
 --   worker : the only code that moves the turtle (state machine over st.phase)
 --   net.run: receives commands, acks them, sends status
@@ -54,6 +54,7 @@ local req = { ret = false, pause = false, resume = false, homeReset = false }
 local helpRetry      = nil    -- fn() -> nextPhase, reason | nil  (NEEDS_HELP auto retry)
 local lastPhase      = nil
 local homeScanned    = false
+local homeGpsCheck             -- defined before H.UNLOADING
 -- Fuel at program start; consumed by the first REFUELING that is still at the boot home.
 local bootFuel       = turtle.getFuelLevel()
 local homeOverhead   = 0      -- fuel spent at home after boot (facing calibration) before leaving
@@ -678,6 +679,26 @@ local function storageReason(reason)
     return tostring(reason)
 end
 
+-- GPS check at home, once per visit: home is where a GPS turtle is most likely in range. The
+-- unload just worked, so the turtle really is at its home storage: a fix that disagrees (and
+-- that nav.gpsLocate accepts) means home and journal were off together; both move by the same
+-- offset, so the grid (relative to home) stays where it was dug. Not in army mode: the station
+-- is shared and set by the player.
+local homeFixAt = nil
+homeGpsCheck = function()
+    if not st.gps or group.active() or homeFixAt == st.stats.trips then return end
+    homeFixAt = st.stats.trips
+    local p = nav.gpsLocate(true)
+    if not p or samePos(p, st.pos) then return end
+    local d = { x = p.x - st.pos.x, y = p.y - st.pos.y, z = p.z - st.pos.z }
+    net.event("warn", "gps correction at home " .. st.pos.x .. "," .. st.pos.y .. "," .. st.pos.z
+        .. " -> " .. p.x .. "," .. p.y .. "," .. p.z)
+    st.home = { x = st.home.x + d.x, y = st.home.y + d.y, z = st.home.z + d.z }
+    st.pos = copyPos(p)
+    save()
+    sendHomeSave()
+end
+
 H.UNLOADING = function()
     if not atHome() then return "RETURNING" end
     local want = group.wantJoin()
@@ -712,7 +733,7 @@ H.UNLOADING = function()
         save()
     end
     local ok, reason = inv.unload()
-    if ok then return "REFUELING" end
+    if ok then homeGpsCheck(); return "REFUELING" end
     helpRetry = function()
         inv.scanHome()
         if inv.unload() then return "REFUELING" end
@@ -1226,7 +1247,12 @@ end
 
 net.init(cfg)
 net.setValidator(validateCmd)
-net.setGpsPos(function() return st and st.gps and type(st.pos) == "table" and st.pos or nil end)
+-- samples for the PCs' GPS setup: only a confirmed position, never mid-move
+net.setGpsPos(function()
+    if not (st and st.gps and st.fixOk and type(st.pos) == "table") then return nil end
+    if nav.moving and nav.moving() then return nil end
+    return st.pos
+end)
 if net.mesh and net.mesh() then net.mesh().o.atHome = function() return st ~= nil and atHome() end end
 -- Keyboard controls on the turtle itself, so it can be run with no monitor or modem.
 local KEYHELP = "Keys: R resume  P pause  B return home  S status  H twice = this is home  N network to disk  J join army  L leave army"
